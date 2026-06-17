@@ -1,4 +1,4 @@
-name: Stable Linux Desktop Cloud
+name: Unbrickable Linux Desktop Cloud
 
 on:
   workflow_dispatch:
@@ -60,24 +60,26 @@ jobs:
           nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
           sleep 3
 
-      # ─── 5. Tunnel stabile con Pinggy (Fix per link Free) ───────────────────
-      - name: Start Pinggy Tunnel
+      # ─── 5. Tunnel Blindato Ngrok Integrato ──────────────────────────────────
+      - name: Start Ngrok Tunnel
         run: |
-          nohup ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 0:localhost:6080 a.pinggy.io > /tmp/tunnel.log 2>&1 &
+          # Scarica il client ufficiale ngrok ed esegue il tunnel sulla porta di noVNC
+          curl -s https://bin.equinox.io/c/b34198102db/ngrok-stable-linux-amd64.tgz | tar xz -C /tmp
           
-          echo "Attendo URL tunnel..."
-          for i in $(seq 1 30); do
-            sleep 2
-            # Modificato per accettare sia .pinggy.link che .pinggy-free.link
-            URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy(-free)?\.link' /tmp/tunnel.log | head -1)
-            if [ -n "$URL" ]; then
-              echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
-              echo "✅ Tunnel Pinggy attivo!"
-              break
-            fi
-          done
-          if [ -z "$URL" ]; then
-            cat /tmp/tunnel.log
+          # Avvia il tunnel senza account (Ngrok offre sessioni di prova temporanee anonime per sviluppatori)
+          nohup /tmp/ngrok http 6080 > /tmp/ngrok.log 2>&1 &
+          sleep 5
+          
+          # Estrae l'URL pubblico sicuro direttamente dall'interfaccia di controllo interna
+          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null)
+          if [ -n "$URL" ]; then
+            # Forza l'indirizzo in HTTPS sicuro per evitare i blocchi di Safari
+            CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
+            echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
+            echo "✅ Tunnel Ngrok attivato!"
+          else
+            echo "❌ Caduta connessione tunnel o limiti superati. Log:"
+            cat /tmp/ngrok.log
             exit 1
           fi
 
@@ -89,7 +91,7 @@ jobs:
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO E STABILE!           ║"
+          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO E FUNZIONANTE!       ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
@@ -105,3 +107,4 @@ jobs:
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
           sleep $SLEEP_SECONDS
+
