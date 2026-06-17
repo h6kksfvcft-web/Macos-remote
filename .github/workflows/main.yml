@@ -20,24 +20,30 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa l'ambiente desktop (Linux Silenzioso) ──────────────────
+      # ─── 1. Installa l'ambiente desktop (Completo e Silenzioso) ──────────────
       - name: Install Desktop Environment and noVNC
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git curl
+          # Aggiunto dbus-x11 e xinit per garantire l'avvio corretto dello schermo virtuale
+          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git curl dbus-x11 xinit
           
           rm -rf /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
 
-      # ─── 2. Avvia lo schermo virtuale e il Desktop ──────────────────────────
+      # ─── 2. Avvia lo schermo virtuale e il Desktop (Fixato) ──────────────────
       - name: Start Virtual Screen and XFCE
         run: |
-          Xvfb :1 -screen 0 1280x720x24 &
+          # Crea lo schermo virtuale indipendente
+          Xvfb :1 -screen 0 1280x720x24 +extension GLX +render -noreset &
           sleep 3
-          DISPLAY=:1 startxfce4 &
+          
+          # Avvia XFCE accoppiato a un'istanza DBUS pulita per evitare blocchi
+          export DISPLAY=:1
+          dbus-launch --exit-with-session startxfce4 &
+          sleep 5
 
       # ─── 3. Avvia il Server VNC con Password ────────────────────────────────
       - name: Start VNC Server
