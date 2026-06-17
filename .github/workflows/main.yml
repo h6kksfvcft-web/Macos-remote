@@ -1,4 +1,4 @@
-name: macOS Desktop (x11vnc + noVNC + localhost.run)
+name: macOS Desktop (Xvfb + fluxbox + x11vnc + noVNC)
 
 on:
   workflow_dispatch:
@@ -20,16 +20,40 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa x11vnc e noVNC ─────────────────────────────────────────
-      - name: Install x11vnc and noVNC
+      # ─── 1. Installa tutto ───────────────────────────────────────────────────
+      - name: Install dependencies
         run: |
-          brew install x11vnc
+          brew install xquartz x11vnc fluxbox 2>&1 | tail -20 || true
 
+          # noVNC via git
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
-          echo "✅ x11vnc e noVNC installati"
 
-      # ─── 2. Avvia x11vnc ────────────────────────────────────────────────────
+          echo "✅ Dipendenze installate"
+
+      # ─── 2. Avvia Xvfb (display virtuale) ───────────────────────────────────
+      - name: Start virtual display
+        run: |
+          # Xvfb crea un display virtuale senza bisogno di hardware
+          XVFB=$(find /opt/X11 /usr/X11 -name Xvfb 2>/dev/null | head -1)
+          echo "Xvfb path: $XVFB"
+
+          nohup "$XVFB" :99 -screen 0 1280x800x24 > /tmp/xvfb.log 2>&1 &
+          sleep 3
+
+          export DISPLAY=:99
+          echo "DISPLAY=:99" >> "$GITHUB_ENV"
+          echo "✅ Display virtuale :99 avviato"
+
+      # ─── 3. Avvia fluxbox (desktop leggero) ─────────────────────────────────
+      - name: Start fluxbox desktop
+        run: |
+          export DISPLAY=:99
+          nohup fluxbox > /tmp/fluxbox.log 2>&1 &
+          sleep 3
+          echo "✅ Fluxbox avviato"
+
+      # ─── 4. Avvia x11vnc sul display virtuale ───────────────────────────────
       - name: Start x11vnc
         run: |
           if [ -n "${{ github.event.inputs.vnc_password }}" ]; then
@@ -39,23 +63,23 @@ jobs:
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
 
-          # x11vnc cattura il display macOS senza bisogno di Screen Sharing
+          export DISPLAY=:99
           nohup x11vnc \
-            -display :0 \
+            -display :99 \
             -passwd "$VNC_PASS" \
             -forever \
-            -loop \
-            -noxdamage \
+            -shared \
             -rfbport 5900 \
             > /tmp/x11vnc.log 2>&1 &
 
-          sleep 8
+          sleep 5
           echo "=== x11vnc log ==="
-          cat /tmp/x11vnc.log | head -30 || true
+          cat /tmp/x11vnc.log | head -20
 
-          pgrep -q x11vnc && echo "✅ x11vnc attivo" || echo "⚠️ x11vnc non avviato"
+          pgrep -q x11vnc && echo "✅ x11vnc attivo sulla porta 5900" \
+                          || echo "❌ x11vnc non avviato"
 
-      # ─── 3. Avvia noVNC ─────────────────────────────────────────────────────
+      # ─── 5. Avvia noVNC ─────────────────────────────────────────────────────
       - name: Start noVNC
         run: |
           nohup python3 /tmp/noVNC/utils/novnc_proxy \
@@ -64,10 +88,12 @@ jobs:
             > /tmp/novnc.log 2>&1 &
 
           sleep 5
-          echo "✅ noVNC in ascolto su porta 6080"
+          pgrep -f novnc_proxy && echo "✅ noVNC attivo sulla porta 6080" \
+                                || echo "❌ noVNC non avviato"
+          cat /tmp/novnc.log | head -10
 
-      # ─── 4. Tunnel con localhost.run ────────────────────────────────────────
-      - name: Start localhost.run tunnel
+      # ─── 6. Tunnel localhost.run ─────────────────────────────────────────────
+      - name: Start tunnel
         run: |
           ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q
 
@@ -86,35 +112,34 @@ jobs:
             URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.lhr\.life' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
-              echo "✅ Tunnel attivo: $URL"
+              echo "✅ Tunnel attivo!"
               break
             fi
             echo -n "."
           done
           echo ""
-          cat /tmp/tunnel.log || true
+          cat /tmp/tunnel.log
 
-      # ─── 5. Mostra credenziali ──────────────────────────────────────────────
+      # ─── 7. Mostra credenziali ──────────────────────────────────────────────
       - name: Display connection info
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           END_TIME=$(date -v+"${SESSION_DURATION}M" "+%H:%M UTC")
-          NOVNC_URL="${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🖥️  macOS DESKTOP REMOTO PRONTO                        ║"
+          echo "║       🖥️  DESKTOP REMOTO PRONTO – APRI NEL BROWSER           ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
-          printf "║  🌐 Apri nel browser:                                        ║\n"
-          echo  "║  $NOVNC_URL"
-          echo  "║                                                              ║"
+          echo "║                                                              ║"
+          echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
+          echo "║                                                              ║"
           printf "║  🔑 Password VNC :  %-41s║\n" "$VNC_PASS"
           printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
           echo "::add-mask::$VNC_PASS"
 
-      # ─── 6. Mantieni la sessione viva ───────────────────────────────────────
+      # ─── 8. Mantieni la sessione viva ───────────────────────────────────────
       - name: Keep session alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
@@ -122,7 +147,6 @@ jobs:
           ELAPSED=0
 
           echo "Sessione attiva per $SESSION_DURATION minuti."
-          echo "Per chiudere prima: annulla il workflow da GitHub Actions."
 
           while [ $ELAPSED -lt $SLEEP_SECONDS ]; do
             NEXT=$(( 300 < (SLEEP_SECONDS - ELAPSED) ? 300 : (SLEEP_SECONDS - ELAPSED) ))
@@ -131,9 +155,10 @@ jobs:
             REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
             [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
 
+            # Watchdog
             pgrep -q x11vnc || nohup x11vnc \
-              -display :0 -passwd "$VNC_PASS" \
-              -forever -loop -noxdamage -rfbport 5900 \
+              -display :99 -passwd "$VNC_PASS" \
+              -forever -shared -rfbport 5900 \
               >> /tmp/x11vnc.log 2>&1 &
 
             pgrep -f "localhost.run" || nohup ssh \
