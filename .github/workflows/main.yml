@@ -1,4 +1,4 @@
-name: macOS Desktop (Self-Hosted)
+name: Linux Desktop Cloud (No Hardware Needed)
 
 on:
   workflow_dispatch:
@@ -16,27 +16,33 @@ on:
 
 jobs:
   remote-desktop:
-    runs-on: self-hosted  # Gira sul tuo Mac fisico
+    runs-on: ubuntu-latest  # ← Cambiato! Ora usa un computer gratuito di GitHub nel cloud
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa dipendenze ──────────────────────────────────────────────
-      - name: Install dependencies
+      # ─── 1. Installa l'ambiente desktop (Linux) ──────────────────────────────
+      - name: Install Desktop Environment and noVNC
         run: |
-          # Usiamo python3 e pip per installare moduli utili se necessari, e scarichiamo noVNC
-          brew install git python3 2>/dev/null || true
+          sudo apt-get update
+          # Installa un desktop leggero (XFCE), un server grafico virtuale (Xvfb) e il server VNC
+          sudo apt-get install -y xfce4 xfce4-goodies xvfb x11vnc python3-pip git
           
-          # Scarica noVNC e websockify
-          rm -rf /tmp/noVNC
-          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC 2>/dev/null || true
-          git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify 2>/dev/null || true
-          
-          # Installiamo un server VNC leggero per macOS se x11vnc non è adatto
-          # In alternativa, ci assicuriamo che python gestisca i pacchetti necessari
-          echo "✅ Dipendenze pronte"
+          # Scarica noVNC
+          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
+          git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
 
-      # ─── 2. Generazione Password e Controllo VNC macOS ──────────────────────
-      - name: Configure VNC Password
+      # ─── 2. Avvia lo schermo virtuale e il Desktop ──────────────────────────
+      - name: Start Virtual Screen and XFCE
+        run: |
+          # Crea uno schermo virtuale (Display :1)
+          Xvfb :1 -screen 0 1280x720x24 &
+          sleep 3
+          
+          # Avvia l'interfaccia grafica dentro lo schermo virtuale
+          DISPLAY=:1 startxfce4 &
+
+      # ─── 3. Avvia il Server VNC con Password ────────────────────────────────
+      - name: Start VNC Server
         run: |
           if [ -n "${{ github.event.inputs.vnc_password }}" ]; then
             VNC_PASS="${{ github.event.inputs.vnc_password }}"
@@ -44,106 +50,54 @@ jobs:
             VNC_PASS="$(openssl rand -hex 4)"
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
-          
-          # Nota: Per usare la condivisione schermo nativa di macOS sulla porta 5900:
-          # sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
-          echo "✅ Password configurata"
 
-      # ─── 3. Avvia noVNC Proxy ───────────────────────────────────────────────
-      # Collega noVNC alla porta del server VNC locale di macOS (solitamente 5900)
+          # Avvia il server VNC sullo schermo virtuale
+          nohup x11vnc -display :1 -passwd "$VNC_PASS" -forever -shared -rfbport 5900 > /tmp/x11vnc.log 2>&1 &
+          sleep 3
+
+      # ─── 4. Avvia noVNC ─────────────────────────────────────────────────────
       - name: Start noVNC
         run: |
-          pkill -f novnc_proxy 2>/dev/null || true
-          sleep 1
-
-          # Mappa la porta 6080 verso la porta VNC standard di macOS (5900)
-          nohup python3 /tmp/noVNC/utils/novnc_proxy \
-            --vnc localhost:5900 \
-            --listen 6080 \
-            > /tmp/novnc.log 2>&1 &
-
+          nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
           sleep 3
-          echo "✅ noVNC attivo sulla porta 6080"
 
-      # ─── 4. Tunnel localhost.run ─────────────────────────────────────────────
+      # ─── 5. Tunnel localhost.run ─────────────────────────────────────────────
       - name: Start tunnel
         run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q 2>/dev/null || true
-
-          pkill -f "localhost.run" 2>/dev/null || true
-          sleep 1
-
-          nohup ssh \
-            -i /tmp/tunnel_key \
-            -o StrictHostKeyChecking=no \
-            -o ServerAliveInterval=30 \
-            -o ServerAliveCountMax=10 \
-            -R 80:localhost:6080 \
-            nokey@localhost.run \
-            > /tmp/tunnel.log 2>&1 &
-
+          ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q
+          nohup ssh -i /tmp/tunnel_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:6080 nokey@localhost.run > /tmp/tunnel.log 2>&1 &
+          
           echo "Attendo URL tunnel..."
           for i in $(seq 1 30); do
             sleep 2
             URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.lhr\.life' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
-              echo "✅ Tunnel attivo!"
               break
             fi
-            echo -n "."
           done
-          echo ""
-          if [ -z "$URL" ]; then
-            cat /tmp/tunnel.log
-            exit 1
-          fi
 
-      # ─── 5. Mostra credenziali (Calcolo tempo compatibile) ──────────────────
+      # ─── 6. Mostra il link per connetterti ──────────────────────────────────
       - name: Display connection info
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          # Calcolo del tempo cross-platform usando Python
-          END_TIME=$(python3 -c "import datetime; print((datetime.datetime.utcnow() + datetime.timedelta(minutes=$SESSION_DURATION)).strftime('%H:%M UTC'))")
+          END_TIME=$(date -d "+$SESSION_DURATION minutes" "+%H:%M UTC" 2>/dev/null || date -v+"${SESSION_DURATION}M" "+%H:%M UTC")
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🖥️  IL TUO MAC È ACCESSIBILE DAL BROWSER!              ║"
+          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO!                      ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true"
+          echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
           echo "║                                                              ║"
           printf "║  🔑 Password VNC :  %-41s║\n" "$VNC_PASS"
           printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
-          echo "::add-mask::$VNC_PASS"
 
-      # ─── 6. Mantieni la sessione viva e monitora il tunnel ──────────────────
+      # ─── 7. Mantieni vivo il flusso ─────────────────────────────────────────
       - name: Keep session alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
-          ELAPSED=0
-
-          echo "Sessione attiva per $SESSION_DURATION minuti."
-          echo "Per chiudere prima: annulla il workflow da GitHub Actions."
-
-          while [ $ELAPSED -lt $SLEEP_SECONDS ]; do
-            NEXT=$(( 300 < (SLEEP_SECONDS - ELAPSED) ? 300 : (SLEEP_SECONDS - ELAPSED) ))
-            sleep $NEXT
-            ELAPSED=$(( ELAPSED + NEXT ))
-            REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
-            [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
-
-            # Ripristina il tunnel se cade
-            pgrep -f "localhost.run" >/dev/null || nohup ssh \
-              -i /tmp/tunnel_key \
-              -o StrictHostKeyChecking=no \
-              -o ServerAliveInterval=30 \
-              -R 80:localhost:6080 \
-              nokey@localhost.run >> /tmp/tunnel.log 2>&1 &
-          done
-
-          echo "✅ Sessione terminata."
+          sleep $SLEEP_SECONDS
