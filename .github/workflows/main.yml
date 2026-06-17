@@ -21,59 +21,67 @@ jobs:
 
     steps:
       # ─── 1. Installa RustDesk client ────────────────────────────────────────
-      - name: Install RustDesk
+      - name: Install RustDesk client
         run: |
           brew install --cask rustdesk
-          echo "✅ RustDesk installato"
+          echo "✅ RustDesk client installato"
 
-      # ─── 2. Scarica e avvia hbbs + hbbr (server self-hosted) ───────────────
-      - name: Start RustDesk self-hosted server
+      # ─── 2. Scarica hbbs + hbbr (binari Linux x86_64, girano su macOS) ─────
+      - name: Download RustDesk server binaries
         run: |
           mkdir -p /tmp/rustdesk-server
           cd /tmp/rustdesk-server
 
-          # Scarica l'ultima release del server RustDesk per macOS
-          SERVER_URL=$(curl -s https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest \
-            | grep "browser_download_url" \
-            | grep "osx" \
-            | head -1 \
-            | cut -d '"' -f 4)
+          # URL diretto — rustdesk-server v1.1.15, Linux amd64
+          curl -fsSL \
+            "https://github.com/rustdesk/rustdesk-server/releases/download/1.1.15/rustdesk-server-linux-amd64.zip" \
+            -o rustdesk-server.zip
 
-          echo "Server URL: $SERVER_URL"
-          curl -L "$SERVER_URL" -o rustdesk-server.zip
           unzip -q rustdesk-server.zip
-          chmod +x hbbs hbbr 2>/dev/null || chmod +x */hbbs */hbbr 2>/dev/null || true
+          ls -la
 
-          # Trova i binari
-          HBBS=$(find . -name "hbbs" -type f | head -1)
-          HBBR=$(find . -name "hbbr" -type f | head -1)
-          echo "hbbs: $HBBS"
-          echo "hbbr: $HBBR"
+          # I binari sono nella sottocartella amd64/
+          chmod +x amd64/hbbs amd64/hbbr
+          echo "✅ hbbs e hbbr pronti"
 
-          # Avvia hbbs (rendezvous server) e hbbr (relay server)
-          nohup "$HBBS" > /tmp/hbbs.log 2>&1 &
+      # ─── 3. Avvia hbbs e hbbr ───────────────────────────────────────────────
+      - name: Start hbbs and hbbr
+        run: |
+          cd /tmp/rustdesk-server
+
+          # hbbs: rendezvous server (porta 21115, 21116, 21118)
+          nohup ./amd64/hbbs > /tmp/hbbs.log 2>&1 &
           sleep 3
-          nohup "$HBBR" > /tmp/hbbr.log 2>&1 &
+
+          # hbbr: relay server (porta 21117, 21119)
+          nohup ./amd64/hbbr > /tmp/hbbr.log 2>&1 &
           sleep 5
 
           echo "=== hbbs log ==="
-          cat /tmp/hbbs.log || true
+          cat /tmp/hbbs.log
 
-          # Ottieni la chiave pubblica generata da hbbs
-          PUB_KEY=$(cat id_ed25519.pub 2>/dev/null || cat /tmp/rustdesk-server/id_ed25519.pub 2>/dev/null || true)
+          echo ""
+          echo "=== hbbr log ==="
+          cat /tmp/hbbr.log
+
+          # Leggi la chiave pubblica generata da hbbs
+          PUB_KEY=$(cat /tmp/rustdesk-server/id_ed25519.pub 2>/dev/null \
+                 || cat /tmp/rustdesk-server/amd64/id_ed25519.pub 2>/dev/null \
+                 || echo "")
           echo "PUB_KEY=$PUB_KEY" >> "$GITHUB_ENV"
-          echo "✅ Server avviato. Chiave pubblica: $PUB_KEY"
+          echo "✅ Chiave pubblica: $PUB_KEY"
 
-      # ─── 3. Ottieni IP pubblico del runner ──────────────────────────────────
-      - name: Get runner public IP
+      # ─── 4. Ottieni IP pubblico ──────────────────────────────────────────────
+      - name: Get public IP
         run: |
-          PUBLIC_IP=$(curl -s https://api.ipify.org || curl -s https://ifconfig.me || echo "127.0.0.1")
+          PUBLIC_IP=$(curl -fsSL https://api.ipify.org)
           echo "PUBLIC_IP=$PUBLIC_IP" >> "$GITHUB_ENV"
           echo "✅ IP pubblico: $PUBLIC_IP"
 
-      # ─── 4. Configura RustDesk client per usare il server locale ────────────
-      - name: Configure RustDesk client
+      # ─── 5. Configura e avvia RustDesk client ───────────────────────────────
+      - name: Configure and start RustDesk client
         run: |
+          # Genera o usa la password fornita
           if [ -n "${{ github.event.inputs.rustdesk_password }}" ]; then
             REMOTE_PASS="${{ github.event.inputs.rustdesk_password }}"
           else
@@ -84,15 +92,12 @@ jobs:
           CONF_DIR="$HOME/Library/Preferences/com.carriez.rustdesk"
           mkdir -p "$CONF_DIR"
 
-          # Punta al server self-hosted (localhost = stesso runner)
           cat > "$CONF_DIR/RustDesk2.toml" << TOML
           rendezvous_server = "127.0.0.1"
-          nat_type = 1
 
           [options]
           custom-rendezvous-server = "127.0.0.1"
           relay-server = "127.0.0.1"
-          api-server = "http://127.0.0.1:21114"
           key = "$PUB_KEY"
           verification-method = "use-permanent-password"
           permanent-password = "$REMOTE_PASS"
@@ -100,42 +105,36 @@ jobs:
           enable-clipboard = "Y"
           TOML
 
-          echo "✅ Config RustDesk client scritta"
-          cat "$CONF_DIR/RustDesk2.toml"
+          echo "✅ Config scritta"
 
-      # ─── 5. Avvia RustDesk client in modalità server ────────────────────────
-      - name: Start RustDesk client
-        run: |
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-          echo "RUSTDESK_BIN=$RUSTDESK" >> "$GITHUB_ENV"
-
-          nohup "$RUSTDESK" --server > /tmp/rustdesk-client.log 2>&1 &
+          nohup "$RUSTDESK" --server > /tmp/rustdesk.log 2>&1 &
           sleep 15
 
-          echo "=== RustDesk client log ==="
-          cat /tmp/rustdesk-client.log || true
+          echo "=== RustDesk log ==="
+          cat /tmp/rustdesk.log || true
 
-      # ─── 6. Recupera l'ID RustDesk ──────────────────────────────────────────
+      # ─── 6. Recupera l'ID ───────────────────────────────────────────────────
       - name: Get RustDesk ID
         run: |
           RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
 
-          # Metodo 1: CLI
           RUSTDESK_ID=$("$RUSTDESK" --get-id 2>/dev/null | tr -d '[:space:]')
 
-          # Metodo 2: config file
           if [ -z "$RUSTDESK_ID" ]; then
-            CONF="$HOME/Library/Preferences/com.carriez.rustdesk/RustDesk2.toml"
-            RUSTDESK_ID=$(grep '^id' "$CONF" 2>/dev/null | awk -F'"' '{print $2}')
+            RUSTDESK_ID=$(grep '^id' \
+              "$HOME/Library/Preferences/com.carriez.rustdesk/RustDesk2.toml" \
+              2>/dev/null | awk -F'"' '{print $2}')
           fi
 
-          # Metodo 3: log
           if [ -z "$RUSTDESK_ID" ]; then
-            RUSTDESK_ID=$(grep -oE '[0-9]{9,12}' /tmp/rustdesk-client.log 2>/dev/null | head -1)
+            echo "Attendo altri 15s..."
+            sleep 15
+            RUSTDESK_ID=$("$RUSTDESK" --get-id 2>/dev/null | tr -d '[:space:]')
           fi
 
           echo "RUSTDESK_ID=${RUSTDESK_ID:-NON_TROVATO}" >> "$GITHUB_ENV"
-          echo "✅ RustDesk ID: ${RUSTDESK_ID:-non trovato}"
+          echo "✅ ID: ${RUSTDESK_ID:-non trovato}"
 
       # ─── 7. Mostra credenziali ──────────────────────────────────────────────
       - name: Display connection info
@@ -150,17 +149,15 @@ jobs:
           printf "║  📍 ID RustDesk  :  %-41s║\n" "$RUSTDESK_ID"
           printf "║  🔑 Password     :  %-41s║\n" "$REMOTE_PASS"
           printf "║  🌐 Server IP    :  %-41s║\n" "$PUBLIC_IP"
-          printf "║  🔐 Chiave pub   :  %-41s║\n" "${PUB_KEY:0:40}"
+          printf "║  🔐 Chiave pub   :  %-41s║\n" "$PUB_KEY"
           printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║  Come connettersi:                                           ║"
-          echo "║  1. Apri RustDesk → Impostazioni → Rete                     ║"
-          echo "║  2. Server ID: inserisci l'IP sopra                         ║"
-          echo "║  3. Chiave: inserisci la chiave pubblica sopra              ║"
-          echo "║  4. Salva, torna alla home, digita l'ID e connettiti        ║"
+          echo "║  1. RustDesk → Impostazioni → Rete → ID/Relay Server        ║"
+          echo "║  2. Inserisci l'IP come server, incolla la chiave pubblica   ║"
+          echo "║  3. Salva, torna alla home, digita l'ID e connettiti         ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
-
           echo "::add-mask::$REMOTE_PASS"
 
       # ─── 8. Mantieni la sessione viva ───────────────────────────────────────
@@ -182,9 +179,9 @@ jobs:
             [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
 
             # Watchdog
-            pgrep -q rustdesk || nohup "$RUSTDESK" --server >> /tmp/rustdesk-client.log 2>&1 &
-            pgrep -q hbbs     || nohup /tmp/rustdesk-server/hbbs >> /tmp/hbbs.log 2>&1 &
-            pgrep -q hbbr     || nohup /tmp/rustdesk-server/hbbr >> /tmp/hbbr.log 2>&1 &
+            pgrep -q rustdesk || nohup "$RUSTDESK" --server >> /tmp/rustdesk.log 2>&1 &
+            pgrep -q hbbs     || nohup /tmp/rustdesk-server/amd64/hbbs >> /tmp/hbbs.log 2>&1 &
+            pgrep -q hbbr     || nohup /tmp/rustdesk-server/amd64/hbbr >> /tmp/hbbr.log 2>&1 &
           done
 
           echo "✅ Sessione terminata."
