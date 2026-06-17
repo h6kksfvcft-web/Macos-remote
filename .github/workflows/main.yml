@@ -1,4 +1,4 @@
-name: macOS Remote Desktop (RustDesk Self-Hosted)
+name: macOS Remote Access (tmate)
 
 on:
   workflow_dispatch:
@@ -8,180 +8,15 @@ on:
         required: false
         default: "60"
         type: string
-      rustdesk_password:
-        description: "Password RustDesk (lascia vuoto per auto-generata)"
-        required: false
-        default: ""
-        type: string
 
 jobs:
-  remote-desktop:
+  remote-access:
     runs-on: macos-latest
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa RustDesk client ────────────────────────────────────────
-      - name: Install RustDesk client
-        run: |
-          brew install --cask rustdesk
-          echo "✅ RustDesk client installato"
-
-      # ─── 2. Scarica hbbs + hbbr (binari Linux x86_64, girano su macOS) ─────
-      - name: Download RustDesk server binaries
-        run: |
-          mkdir -p /tmp/rustdesk-server
-          cd /tmp/rustdesk-server
-
-          # URL diretto — rustdesk-server v1.1.15, Linux amd64
-          curl -fsSL \
-            "https://github.com/rustdesk/rustdesk-server/releases/download/1.1.15/rustdesk-server-linux-amd64.zip" \
-            -o rustdesk-server.zip
-
-          unzip -q rustdesk-server.zip
-          ls -la
-
-          # I binari sono nella sottocartella amd64/
-          chmod +x amd64/hbbs amd64/hbbr
-          echo "✅ hbbs e hbbr pronti"
-
-      # ─── 3. Avvia hbbs e hbbr ───────────────────────────────────────────────
-      - name: Start hbbs and hbbr
-        run: |
-          cd /tmp/rustdesk-server
-
-          # hbbs: rendezvous server (porta 21115, 21116, 21118)
-          nohup ./amd64/hbbs > /tmp/hbbs.log 2>&1 &
-          sleep 3
-
-          # hbbr: relay server (porta 21117, 21119)
-          nohup ./amd64/hbbr > /tmp/hbbr.log 2>&1 &
-          sleep 5
-
-          echo "=== hbbs log ==="
-          cat /tmp/hbbs.log
-
-          echo ""
-          echo "=== hbbr log ==="
-          cat /tmp/hbbr.log
-
-          # Leggi la chiave pubblica generata da hbbs
-          PUB_KEY=$(cat /tmp/rustdesk-server/id_ed25519.pub 2>/dev/null \
-                 || cat /tmp/rustdesk-server/amd64/id_ed25519.pub 2>/dev/null \
-                 || echo "")
-          echo "PUB_KEY=$PUB_KEY" >> "$GITHUB_ENV"
-          echo "✅ Chiave pubblica: $PUB_KEY"
-
-      # ─── 4. Ottieni IP pubblico ──────────────────────────────────────────────
-      - name: Get public IP
-        run: |
-          PUBLIC_IP=$(curl -fsSL https://api.ipify.org)
-          echo "PUBLIC_IP=$PUBLIC_IP" >> "$GITHUB_ENV"
-          echo "✅ IP pubblico: $PUBLIC_IP"
-
-      # ─── 5. Configura e avvia RustDesk client ───────────────────────────────
-      - name: Configure and start RustDesk client
-        run: |
-          # Genera o usa la password fornita
-          if [ -n "${{ github.event.inputs.rustdesk_password }}" ]; then
-            REMOTE_PASS="${{ github.event.inputs.rustdesk_password }}"
-          else
-            REMOTE_PASS="$(openssl rand -hex 6)"
-          fi
-          echo "REMOTE_PASS=$REMOTE_PASS" >> "$GITHUB_ENV"
-
-          CONF_DIR="$HOME/Library/Preferences/com.carriez.rustdesk"
-          mkdir -p "$CONF_DIR"
-
-          cat > "$CONF_DIR/RustDesk2.toml" << TOML
-          rendezvous_server = "127.0.0.1"
-
-          [options]
-          custom-rendezvous-server = "127.0.0.1"
-          relay-server = "127.0.0.1"
-          key = "$PUB_KEY"
-          verification-method = "use-permanent-password"
-          permanent-password = "$REMOTE_PASS"
-          enable-keyboard = "Y"
-          enable-clipboard = "Y"
-          TOML
-
-          echo "✅ Config scritta"
-
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-          nohup "$RUSTDESK" --server > /tmp/rustdesk.log 2>&1 &
-          sleep 15
-
-          echo "=== RustDesk log ==="
-          cat /tmp/rustdesk.log || true
-
-      # ─── 6. Recupera l'ID ───────────────────────────────────────────────────
-      - name: Get RustDesk ID
-        run: |
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-
-          RUSTDESK_ID=$("$RUSTDESK" --get-id 2>/dev/null | tr -d '[:space:]')
-
-          if [ -z "$RUSTDESK_ID" ]; then
-            RUSTDESK_ID=$(grep '^id' \
-              "$HOME/Library/Preferences/com.carriez.rustdesk/RustDesk2.toml" \
-              2>/dev/null | awk -F'"' '{print $2}')
-          fi
-
-          if [ -z "$RUSTDESK_ID" ]; then
-            echo "Attendo altri 15s..."
-            sleep 15
-            RUSTDESK_ID=$("$RUSTDESK" --get-id 2>/dev/null | tr -d '[:space:]')
-          fi
-
-          echo "RUSTDESK_ID=${RUSTDESK_ID:-NON_TROVATO}" >> "$GITHUB_ENV"
-          echo "✅ ID: ${RUSTDESK_ID:-non trovato}"
-
-      # ─── 7. Mostra credenziali ──────────────────────────────────────────────
-      - name: Display connection info
-        run: |
-          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          END_TIME=$(date -v+"${SESSION_DURATION}M" "+%H:%M UTC")
-
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║     🖥️  RUSTDESK SELF-HOSTED – ACCESSO REMOTO PRONTO         ║"
-          echo "╠══════════════════════════════════════════════════════════════╣"
-          printf "║  📍 ID RustDesk  :  %-41s║\n" "$RUSTDESK_ID"
-          printf "║  🔑 Password     :  %-41s║\n" "$REMOTE_PASS"
-          printf "║  🌐 Server IP    :  %-41s║\n" "$PUBLIC_IP"
-          printf "║  🔐 Chiave pub   :  %-41s║\n" "$PUB_KEY"
-          printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
-          echo "╠══════════════════════════════════════════════════════════════╣"
-          echo "║  Come connettersi:                                           ║"
-          echo "║  1. RustDesk → Impostazioni → Rete → ID/Relay Server        ║"
-          echo "║  2. Inserisci l'IP come server, incolla la chiave pubblica   ║"
-          echo "║  3. Salva, torna alla home, digita l'ID e connettiti         ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-          echo "::add-mask::$REMOTE_PASS"
-
-      # ─── 8. Mantieni la sessione viva ───────────────────────────────────────
-      - name: Keep session alive
-        run: |
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
-          ELAPSED=0
-
-          echo "Sessione attiva per $SESSION_DURATION minuti."
-          echo "Per chiudere prima: annulla il workflow da GitHub Actions."
-
-          while [ $ELAPSED -lt $SLEEP_SECONDS ]; do
-            NEXT=$(( 300 < (SLEEP_SECONDS - ELAPSED) ? 300 : (SLEEP_SECONDS - ELAPSED) ))
-            sleep $NEXT
-            ELAPSED=$(( ELAPSED + NEXT ))
-            REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
-            [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
-
-            # Watchdog
-            pgrep -q rustdesk || nohup "$RUSTDESK" --server >> /tmp/rustdesk.log 2>&1 &
-            pgrep -q hbbs     || nohup /tmp/rustdesk-server/amd64/hbbs >> /tmp/hbbs.log 2>&1 &
-            pgrep -q hbbr     || nohup /tmp/rustdesk-server/amd64/hbbr >> /tmp/hbbr.log 2>&1 &
-          done
-
-          echo "✅ Sessione terminata."
+      - name: Start tmate session
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: true
+        timeout-minutes: ${{ fromJSON(github.event.inputs.session_duration) }}
