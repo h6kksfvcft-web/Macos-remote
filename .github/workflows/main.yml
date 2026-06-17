@@ -20,27 +20,23 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa l'ambiente desktop (Completo e Silenzioso) ──────────────
+      # ─── 1. Installa l'ambiente desktop ──────────────────────────────────────
       - name: Install Desktop Environment and noVNC
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          # Aggiunto dbus-x11 e xinit per garantire l'avvio corretto dello schermo virtuale
           sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git curl dbus-x11 xinit
           
           rm -rf /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
 
-      # ─── 2. Avvia lo schermo virtuale e il Desktop (Fixato) ──────────────────
+      # ─── 2. Avvia lo schermo virtuale e il Desktop ──────────────────────────
       - name: Start Virtual Screen and XFCE
         run: |
-          # Crea lo schermo virtuale indipendente
           Xvfb :1 -screen 0 1280x720x24 +extension GLX +render -noreset &
           sleep 3
-          
-          # Avvia XFCE accoppiato a un'istanza DBUS pulita per evitare blocchi
           export DISPLAY=:1
           dbus-launch --exit-with-session startxfce4 &
           sleep 5
@@ -64,7 +60,7 @@ jobs:
           nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
           sleep 3
 
-      # ─── 5. Tunnel stabile con Pinggy (Senza Token o Registrazioni) ─────────
+      # ─── 5. Tunnel stabile con Pinggy (Fix per link Free) ───────────────────
       - name: Start Pinggy Tunnel
         run: |
           nohup ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 0:localhost:6080 a.pinggy.io > /tmp/tunnel.log 2>&1 &
@@ -72,7 +68,8 @@ jobs:
           echo "Attendo URL tunnel..."
           for i in $(seq 1 30); do
             sleep 2
-            URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy\.link' /tmp/tunnel.log | head -1)
+            # Modificato per accettare sia .pinggy.link che .pinggy-free.link
+            URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy(-free)?\.link' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
               echo "✅ Tunnel Pinggy attivo!"
