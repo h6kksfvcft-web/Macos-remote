@@ -1,4 +1,4 @@
-name: macOS Desktop (noVNC + localhost.run)
+name: macOS Desktop (x11vnc + noVNC + localhost.run)
 
 on:
   workflow_dispatch:
@@ -20,8 +20,17 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Imposta password VNC ─────────────────────────────────────────────
-      - name: Set VNC password
+      # ─── 1. Installa x11vnc e noVNC ─────────────────────────────────────────
+      - name: Install x11vnc and noVNC
+        run: |
+          brew install x11vnc
+
+          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
+          git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
+          echo "✅ x11vnc e noVNC installati"
+
+      # ─── 2. Avvia x11vnc ────────────────────────────────────────────────────
+      - name: Start x11vnc
         run: |
           if [ -n "${{ github.event.inputs.vnc_password }}" ]; then
             VNC_PASS="${{ github.event.inputs.vnc_password }}"
@@ -30,57 +39,38 @@ jobs:
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
 
-          # Imposta password VNC tramite defaults macOS
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement \
-            VNCPassword -data "$(echo -n "$VNC_PASS" | xxd -p)"
+          # x11vnc cattura il display macOS senza bisogno di Screen Sharing
+          nohup x11vnc \
+            -display :0 \
+            -passwd "$VNC_PASS" \
+            -forever \
+            -loop \
+            -noxdamage \
+            -rfbport 5900 \
+            > /tmp/x11vnc.log 2>&1 &
 
-      # ─── 2. Abilita Screen Sharing (VNC) di macOS ───────────────────────────
-      - name: Enable macOS Screen Sharing
+          sleep 8
+          echo "=== x11vnc log ==="
+          cat /tmp/x11vnc.log | head -30 || true
+
+          pgrep -q x11vnc && echo "✅ x11vnc attivo" || echo "⚠️ x11vnc non avviato"
+
+      # ─── 3. Avvia noVNC ─────────────────────────────────────────────────────
+      - name: Start noVNC
         run: |
-          # Abilita ARD/VNC built-in di macOS
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate \
-            -configure -access -on \
-            -configure -allowAccessFor -allUsers \
-            -configure -restart -agent \
-            -configure -privs -all \
-            -configure -clientopts -setvnclegacy -vnclegacy yes \
-            -configure -clientopts -setvncpw -vncpw "$VNC_PASS"
-
-          sleep 3
-          echo "✅ Screen Sharing abilitato sulla porta 5900"
-
-      # ─── 3. Installa noVNC ───────────────────────────────────────────────────
-      - name: Install and start noVNC
-        run: |
-          brew install novnc 2>/dev/null || true
-
-          # Fallback: scarica noVNC direttamente
-          if ! command -v novnc &>/dev/null; then
-            git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
-            git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
-            NOVNC_CMD="python3 /tmp/noVNC/utils/novnc_proxy"
-          else
-            NOVNC_CMD="novnc"
-          fi
-
-          # Avvia noVNC su porta 6080 → bridge verso VNC su 5900
-          nohup $NOVNC_CMD \
+          nohup python3 /tmp/noVNC/utils/novnc_proxy \
             --vnc localhost:5900 \
             --listen 6080 \
             > /tmp/novnc.log 2>&1 &
 
           sleep 5
           echo "✅ noVNC in ascolto su porta 6080"
-          cat /tmp/novnc.log || true
 
-      # ─── 4. Avvia tunnel pubblico con localhost.run ──────────────────────────
+      # ─── 4. Tunnel con localhost.run ────────────────────────────────────────
       - name: Start localhost.run tunnel
         run: |
-          # Genera chiave SSH temporanea per localhost.run
           ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q
 
-          # Avvia tunnel: porta 6080 (noVNC) → URL pubblico
           nohup ssh \
             -i /tmp/tunnel_key \
             -o StrictHostKeyChecking=no \
@@ -101,9 +91,7 @@ jobs:
             fi
             echo -n "."
           done
-
           echo ""
-          echo "=== Tunnel log ==="
           cat /tmp/tunnel.log || true
 
       # ─── 5. Mostra credenziali ──────────────────────────────────────────────
@@ -111,21 +99,17 @@ jobs:
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           END_TIME=$(date -v+"${SESSION_DURATION}M" "+%H:%M UTC")
-
           NOVNC_URL="${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
           echo "║       🖥️  macOS DESKTOP REMOTO PRONTO                        ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
-          printf "║  🌐 URL Desktop  :  %-41s║\n" "$TUNNEL_URL/vnc.html"
+          printf "║  🌐 Apri nel browser:                                        ║\n"
+          echo  "║  $NOVNC_URL"
+          echo  "║                                                              ║"
           printf "║  🔑 Password VNC :  %-41s║\n" "$VNC_PASS"
-          printf "║  ⚡ URL diretto  :  %-41s║\n" "(vedi sotto)"
           printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
-          echo "╠══════════════════════════════════════════════════════════════╣"
-          echo "║  Come connettersi:                                           ║"
-          echo "║  Apri questo link nel browser:                               ║"
-          echo "║  $NOVNC_URL"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
           echo "::add-mask::$VNC_PASS"
@@ -147,7 +131,11 @@ jobs:
             REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
             [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
 
-            # Watchdog tunnel
+            pgrep -q x11vnc || nohup x11vnc \
+              -display :0 -passwd "$VNC_PASS" \
+              -forever -loop -noxdamage -rfbport 5900 \
+              >> /tmp/x11vnc.log 2>&1 &
+
             pgrep -f "localhost.run" || nohup ssh \
               -i /tmp/tunnel_key \
               -o StrictHostKeyChecking=no \
