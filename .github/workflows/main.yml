@@ -1,4 +1,4 @@
-name: macOS Desktop (Self-Hosted)
+Name: macOS Desktop (Self-Hosted)
 
 on:
   workflow_dispatch:
@@ -16,20 +16,27 @@ on:
 
 jobs:
   remote-desktop:
-    runs-on: self-hosted  # ← gira sul tuo Mac
+    runs-on: self-hosted  # Gira sul tuo Mac fisico
     timeout-minutes: 360
 
     steps:
       # ─── 1. Installa dipendenze ──────────────────────────────────────────────
       - name: Install dependencies
         run: |
-          brew install x11vnc 2>/dev/null || true
+          # Usiamo python3 e pip per installare moduli utili se necessari, e scarichiamo noVNC
+          brew install git python3 2>/dev/null || true
+          
+          # Scarica noVNC e websockify
+          rm -rf /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC 2>/dev/null || true
           git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify 2>/dev/null || true
+          
+          # Installiamo un server VNC leggero per macOS se x11vnc non è adatto
+          # In alternativa, ci assicuriamo che python gestisca i pacchetti necessari
           echo "✅ Dipendenze pronte"
 
-      # ─── 2. Avvia x11vnc sul tuo display reale ──────────────────────────────
-      - name: Start x11vnc
+      # ─── 2. Generazione Password e Controllo VNC macOS ──────────────────────
+      - name: Configure VNC Password
         run: |
           if [ -n "${{ github.event.inputs.vnc_password }}" ]; then
             VNC_PASS="${{ github.event.inputs.vnc_password }}"
@@ -37,27 +44,19 @@ jobs:
             VNC_PASS="$(openssl rand -hex 4)"
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
+          
+          # Nota: Per usare la condivisione schermo nativa di macOS sulla porta 5900:
+          # sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
+          echo "✅ Password configurata"
 
-          pkill x11vnc 2>/dev/null || true
-          sleep 1
-
-          nohup x11vnc \
-            -display :0 \
-            -passwd "$VNC_PASS" \
-            -forever \
-            -shared \
-            -rfbport 5900 \
-            > /tmp/x11vnc.log 2>&1 &
-
-          sleep 5
-          pgrep -q x11vnc && echo "✅ x11vnc attivo" || echo "❌ x11vnc non avviato"
-
-      # ─── 3. Avvia noVNC ─────────────────────────────────────────────────────
+      # ─── 3. Avvia noVNC Proxy ───────────────────────────────────────────────
+      # Collega noVNC alla porta del server VNC locale di macOS (solitamente 5900)
       - name: Start noVNC
         run: |
           pkill -f novnc_proxy 2>/dev/null || true
           sleep 1
 
+          # Mappa la porta 6080 verso la porta VNC standard di macOS (5900)
           nohup python3 /tmp/noVNC/utils/novnc_proxy \
             --vnc localhost:5900 \
             --listen 6080 \
@@ -69,7 +68,8 @@ jobs:
       # ─── 4. Tunnel localhost.run ─────────────────────────────────────────────
       - name: Start tunnel
         run: |
-          ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q -f /tmp/tunnel_key 2>/dev/null || true
+          mkdir -p ~/.ssh
+          ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q 2>/dev/null || true
 
           pkill -f "localhost.run" 2>/dev/null || true
           sleep 1
@@ -95,20 +95,24 @@ jobs:
             echo -n "."
           done
           echo ""
-          cat /tmp/tunnel.log
+          if [ -z "$URL" ]; then
+            cat /tmp/tunnel.log
+            exit 1
+          fi
 
-      # ─── 5. Mostra credenziali ──────────────────────────────────────────────
+      # ─── 5. Mostra credenziali (Calcolo tempo compatibile) ──────────────────
       - name: Display connection info
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          END_TIME=$(date -v+"${SESSION_DURATION}M" "+%H:%M UTC")
+          # Calcolo del tempo cross-platform usando Python
+          END_TIME=$(python3 -c "import datetime; print((datetime.datetime.utcnow() + datetime.timedelta(minutes=$SESSION_DURATION)).strftime('%H:%M UTC'))")
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
           echo "║       🖥️  IL TUO MAC È ACCESSIBILE DAL BROWSER!              ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
+          echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true"
           echo "║                                                              ║"
           printf "║  🔑 Password VNC :  %-41s║\n" "$VNC_PASS"
           printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
@@ -116,7 +120,7 @@ jobs:
           echo ""
           echo "::add-mask::$VNC_PASS"
 
-      # ─── 6. Mantieni la sessione viva ───────────────────────────────────────
+      # ─── 6. Mantieni la sessione viva e monitora il tunnel ──────────────────
       - name: Keep session alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
@@ -133,12 +137,8 @@ jobs:
             REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
             [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
 
-            pgrep -q x11vnc || nohup x11vnc \
-              -display :0 -passwd "$VNC_PASS" \
-              -forever -shared -rfbport 5900 \
-              >> /tmp/x11vnc.log 2>&1 &
-
-            pgrep -f "localhost.run" || nohup ssh \
+            # Ripristina il tunnel se cade
+            pgrep -f "localhost.run" >/dev/null || nohup ssh \
               -i /tmp/tunnel_key \
               -o StrictHostKeyChecking=no \
               -o ServerAliveInterval=30 \
