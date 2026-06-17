@@ -1,4 +1,4 @@
-Name: macOS Desktop (Self-Hosted)
+name: macOS Desktop (Self-Hosted)
 
 on:
   workflow_dispatch:
