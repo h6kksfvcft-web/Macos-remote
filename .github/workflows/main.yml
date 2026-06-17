@@ -1,4 +1,4 @@
-name: Linux Desktop Cloud (No Hardware Needed)
+name: Stable Linux Desktop Cloud
 
 on:
   workflow_dispatch:
@@ -26,10 +26,8 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          # Installazione super leggera e senza domande interattive
-          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git
+          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git curl
           
-          # Scarica noVNC
           rm -rf /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
@@ -60,22 +58,25 @@ jobs:
           nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
           sleep 3
 
-      # ─── 5. Tunnel localhost.run ─────────────────────────────────────────────
-      - name: Start tunnel
+      # ─── 5. Tunnel stabile con Pinggy (Senza Token o Registrazioni) ─────────
+      - name: Start Pinggy Tunnel
         run: |
-          mkdir -p ~/.ssh
-          ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q
-          nohup ssh -i /tmp/tunnel_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:6080 nokey@localhost.run > /tmp/tunnel.log 2>&1 &
+          nohup ssh -p 443 -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 0:localhost:6080 a.pinggy.io > /tmp/tunnel.log 2>&1 &
           
           echo "Attendo URL tunnel..."
           for i in $(seq 1 30); do
             sleep 2
-            URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.lhr\.life' /tmp/tunnel.log | head -1)
+            URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.pinggy\.link' /tmp/tunnel.log | head -1)
             if [ -n "$URL" ]; then
               echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
+              echo "✅ Tunnel Pinggy attivo!"
               break
             fi
           done
+          if [ -z "$URL" ]; then
+            cat /tmp/tunnel.log
+            exit 1
+          fi
 
       # ─── 6. Mostra il link per connetterti ──────────────────────────────────
       - name: Display connection info
@@ -85,7 +86,7 @@ jobs:
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO!                      ║"
+          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO E STABILE!           ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
