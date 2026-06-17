@@ -1,0 +1,138 @@
+name: macOS Remote Desktop (AnyDesk)
+
+on:
+  workflow_dispatch:
+    inputs:
+      session_duration:
+        description: "Durata sessione in minuti (max 360)"
+        required: false
+        default: "60"
+        type: string
+      anydesk_password:
+        description: "Password personalizzata per AnyDesk (lascia vuoto per auto-generata)"
+        required: false
+        default: ""
+        type: string
+
+jobs:
+  remote-desktop:
+    runs-on: macos-latest
+    timeout-minutes: 360
+
+    steps:
+      # ─── 1. Installa AnyDesk via Homebrew ───────────────────────────────────
+      - name: Install AnyDesk
+        run: |
+          echo "::group::Homebrew install"
+          brew install --cask anydesk
+          echo "::endgroup::"
+
+      # ─── 2. Avvia il demone AnyDesk ─────────────────────────────────────────
+      - name: Start AnyDesk daemon
+        run: |
+          # Cerca il percorso dell'eseguibile AnyDesk
+          ANYDESK_BIN=$(find /Applications -name "AnyDesk" -type f 2>/dev/null | head -1)
+          if [ -z "$ANYDESK_BIN" ]; then
+            ANYDESK_BIN=$(which anydesk 2>/dev/null || true)
+          fi
+
+          echo "AnyDesk binary: $ANYDESK_BIN"
+
+          # Avvia AnyDesk in background
+          nohup "$ANYDESK_BIN" &>/tmp/anydesk.log &
+          sleep 8
+
+          echo "ANYDESK_BIN=$ANYDESK_BIN" >> "$GITHUB_ENV"
+
+      # ─── 3. Imposta la password di accesso ──────────────────────────────────
+      - name: Set AnyDesk password
+        run: |
+          # Usa password fornita o ne genera una casuale sicura
+          if [ -n "${{ github.event.inputs.anydesk_password }}" ]; then
+            REMOTE_PASS="${{ github.event.inputs.anydesk_password }}"
+          else
+            REMOTE_PASS="$(openssl rand -base64 12 | tr -dc 'A-Za-z0-9@#$' | head -c 16)"
+          fi
+
+          echo "REMOTE_PASS=$REMOTE_PASS" >> "$GITHUB_ENV"
+
+          # Imposta la password tramite CLI di AnyDesk
+          echo "$REMOTE_PASS" | "$ANYDESK_BIN" --set-password
+          sleep 3
+
+      # ─── 4. Recupera l'ID AnyDesk ───────────────────────────────────────────
+      - name: Get AnyDesk address
+        run: |
+          # Prova a leggere l'ID dal processo attivo
+          ANYDESK_ID=$("$ANYDESK_BIN" --get-id 2>/dev/null || true)
+
+          # Fallback: leggi dal file di configurazione
+          if [ -z "$ANYDESK_ID" ] || [ "$ANYDESK_ID" = "0" ]; then
+            CONFIG_FILE="$HOME/Library/Application Support/AnyDesk/user.conf"
+            if [ -f "$CONFIG_FILE" ]; then
+              ANYDESK_ID=$(grep "ad.anynet.id" "$CONFIG_FILE" | awk -F'=' '{print $2}' | tr -d ' ')
+            fi
+          fi
+
+          # Secondo fallback: cerca nei log
+          if [ -z "$ANYDESK_ID" ] || [ "$ANYDESK_ID" = "0" ]; then
+            ANYDESK_ID=$(grep -o 'id=[0-9]*' /tmp/anydesk.log 2>/dev/null | head -1 | cut -d= -f2 || true)
+          fi
+
+          echo "ANYDESK_ID=$ANYDESK_ID" >> "$GITHUB_ENV"
+
+      # ─── 5. Abilita accesso non supervisionato ──────────────────────────────
+      - name: Enable unattended access
+        run: |
+          "$ANYDESK_BIN" --set-config "ad.security.interactive_access=1" 2>/dev/null || true
+          "$ANYDESK_BIN" --set-config "ad.security.allow_remote_view=1" 2>/dev/null || true
+
+      # ─── 6. Mostra le credenziali di accesso ────────────────────────────────
+      - name: 🖥️ Display remote access credentials
+        run: |
+          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
+          END_TIME=$(date -v+"${SESSION_DURATION}M" "+%H:%M UTC" 2>/dev/null || \
+                     date -d "+${SESSION_DURATION} minutes" "+%H:%M UTC" 2>/dev/null || \
+                     echo "N/D")
+
+          echo ""
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║          🖥️  ANYDESK – ACCESSO REMOTO macOS PRONTO           ║"
+          echo "╠══════════════════════════════════════════════════════════════╣"
+          echo "║                                                              ║"
+          echo "║  📍 Indirizzo AnyDesk : $ANYDESK_ID"
+          echo "║  🔑 Password          : $REMOTE_PASS"
+          echo "║  ⏱️  Sessione attiva fino a: $END_TIME (~${SESSION_DURATION} min)"
+          echo "║                                                              ║"
+          echo "║  Come connettersi:                                           ║"
+          echo "║  1. Apri AnyDesk sul tuo dispositivo                        ║"
+          echo "║  2. Inserisci l'indirizzo sopra                              ║"
+          echo "║  3. Quando richiesta, inserisci la password                  ║"
+          echo "║                                                              ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
+          echo ""
+
+          # Maschere i dati sensibili dai log di GitHub (opzionale)
+          echo "::add-mask::$REMOTE_PASS"
+
+      # ─── 7. Mantieni la sessione attiva ─────────────────────────────────────
+      - name: Keep session alive
+        run: |
+          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
+          SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
+
+          echo "Sessione attiva per $SESSION_DURATION minuti..."
+          echo "Per terminare prima, annulla manualmente il workflow."
+
+          # Heartbeat ogni 5 minuti per evitare timeout
+          ELAPSED=0
+          while [ $ELAPSED -lt $SLEEP_SECONDS ]; do
+            sleep 300
+            ELAPSED=$(( ELAPSED + 300 ))
+            REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
+            if [ $REMAINING -gt 0 ]; then
+              echo "⏳ Sessione attiva – $REMAINING minuti rimanenti"
+            fi
+          done
+
+          echo "✅ Sessione terminata."
