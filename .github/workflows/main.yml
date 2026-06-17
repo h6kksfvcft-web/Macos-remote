@@ -20,79 +20,88 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa RustDesk ────────────────────────────────────────────────
+      # ─── 1. Installa RustDesk via Homebrew ──────────────────────────────────
       - name: Install RustDesk
         run: |
-          # Scarica l'ultima release di RustDesk per macOS
-          LATEST=$(curl -s https://api.github.com/repos/rustdesk/rustdesk/releases/latest \
-            | grep "browser_download_url" \
-            | grep "macos" \
-            | grep -v "arm64" \
-            | grep "\.dmg" \
-            | head -1 \
-            | cut -d '"' -f 4)
-
-          echo "Download da: $LATEST"
-          curl -L "$LATEST" -o /tmp/rustdesk.dmg
-
-          # Monta e installa il DMG
-          hdiutil attach /tmp/rustdesk.dmg -nobrowse -quiet
-          MOUNT=$(ls /Volumes | grep -i rustdesk | head -1)
-          echo "Volume montato: /Volumes/$MOUNT"
-
-          cp -R "/Volumes/$MOUNT/RustDesk.app" /Applications/
-          hdiutil detach "/Volumes/$MOUNT" -quiet
-
+          brew install --cask rustdesk
           echo "✅ RustDesk installato"
           ls /Applications/RustDesk.app/Contents/MacOS/
 
-      # ─── 2. Avvia RustDesk headless ─────────────────────────────────────────
-      - name: Start RustDesk
+      # ─── 2. Genera password e scrivi configurazione ─────────────────────────
+      - name: Configure RustDesk
         run: |
-          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
-
-          # Genera o usa password fornita
           if [ -n "${{ github.event.inputs.rustdesk_password }}" ]; then
             REMOTE_PASS="${{ github.event.inputs.rustdesk_password }}"
           else
-            REMOTE_PASS="$(openssl rand -base64 12 | tr -dc 'A-Za-z0-9' | head -c 12)"
+            REMOTE_PASS="$(openssl rand -hex 6)"
           fi
-
           echo "REMOTE_PASS=$REMOTE_PASS" >> "$GITHUB_ENV"
-          echo "RUSTDESK_BIN=$RUSTDESK" >> "$GITHUB_ENV"
 
-          # Imposta password e avvia in modalità servizio headless
-          "$RUSTDESK" --password "$REMOTE_PASS" &
-          sleep 5
+          # Percorso config RustDesk su macOS
+          CONF_DIR="$HOME/Library/Preferences/com.carriez.rustdesk"
+          mkdir -p "$CONF_DIR"
+
+          # RustDesk2.toml — config principale
+          cat > "$CONF_DIR/RustDesk2.toml" << TOML
+          [options]
+          verification-method = "use-permanent-password"
+          permanent-password = "$REMOTE_PASS"
+          enable-keyboard = "Y"
+          enable-clipboard = "Y"
+          enable-file-transfer = "Y"
+          TOML
+
+          echo "✅ Config scritta in $CONF_DIR"
+          cat "$CONF_DIR/RustDesk2.toml"
+
+      # ─── 3. Avvia RustDesk in modalità server ───────────────────────────────
+      - name: Start RustDesk server
+        run: |
+          RUSTDESK="/Applications/RustDesk.app/Contents/MacOS/rustdesk"
+          echo "RUSTDESK_BIN=$RUSTDESK" >> "$GITHUB_ENV"
 
           # Avvia il server headless
           nohup "$RUSTDESK" --server > /tmp/rustdesk.log 2>&1 &
-          sleep 10
+          sleep 15
 
-          echo "=== Log RustDesk ==="
+          echo "=== Log ==="
           cat /tmp/rustdesk.log || true
 
-      # ─── 3. Recupera l'ID RustDesk ──────────────────────────────────────────
+          echo ""
+          echo "=== Processo attivo? ==="
+          pgrep -l rustdesk || echo "⚠️ Non trovato nel processo list"
+
+      # ─── 4. Recupera l'ID ───────────────────────────────────────────────────
       - name: Get RustDesk ID
         run: |
-          # RustDesk supporta --get-id nativamente
+          # Metodo 1: CLI --get-id (supportato ufficialmente)
           RUSTDESK_ID=$("$RUSTDESK_BIN" --get-id 2>/dev/null | tr -d '[:space:]')
+          echo "CLI --get-id: '${RUSTDESK_ID}'"
 
-          # Fallback: leggi dai log
-          if [ -z "$RUSTDESK_ID" ]; then
-            RUSTDESK_ID=$(grep -oE '[0-9]{9,12}' /tmp/rustdesk.log 2>/dev/null | head -1)
-          fi
-
-          # Fallback: file di config
+          # Metodo 2: leggi dal file di config aggiornato da RustDesk
           if [ -z "$RUSTDESK_ID" ]; then
             CONF="$HOME/Library/Preferences/com.carriez.rustdesk/RustDesk2.toml"
-            RUSTDESK_ID=$(grep "^id" "$CONF" 2>/dev/null | awk -F'"' '{print $2}')
+            RUSTDESK_ID=$(grep '^id' "$CONF" 2>/dev/null | awk -F'"' '{print $2}')
+            echo "Config file: '${RUSTDESK_ID}'"
+          fi
+
+          # Metodo 3: cerca nei log
+          if [ -z "$RUSTDESK_ID" ]; then
+            RUSTDESK_ID=$(grep -oE '[0-9]{9,12}' /tmp/rustdesk.log 2>/dev/null | head -1)
+            echo "Log grep: '${RUSTDESK_ID}'"
+          fi
+
+          # Metodo 4: aspetta altri 15s e riprova
+          if [ -z "$RUSTDESK_ID" ]; then
+            echo "ID non trovato, attendo altri 15s..."
+            sleep 15
+            RUSTDESK_ID=$("$RUSTDESK_BIN" --get-id 2>/dev/null | tr -d '[:space:]')
           fi
 
           echo "RUSTDESK_ID=${RUSTDESK_ID:-NON_TROVATO}" >> "$GITHUB_ENV"
-          echo "✅ RustDesk ID: ${RUSTDESK_ID:-non trovato}"
+          echo "✅ ID finale: ${RUSTDESK_ID:-non trovato}"
 
-      # ─── 4. Mostra credenziali ──────────────────────────────────────────────
+      # ─── 5. Mostra credenziali ──────────────────────────────────────────────
       - name: Display connection info
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
@@ -107,17 +116,15 @@ jobs:
           printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║  Come connettersi:                                           ║"
-          echo "║  1. Apri RustDesk sul tuo PC / Mac                          ║"
+          echo "║  1. Scarica RustDesk → https://rustdesk.com/download        ║"
           echo "║  2. Digita l'ID e premi Invio                                ║"
           echo "║  3. Inserisci la password quando richiesta                   ║"
-          echo "║  📥 Download: https://rustdesk.com/download                  ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
 
-          # Maschera la password dai log successivi
           echo "::add-mask::$REMOTE_PASS"
 
-      # ─── 5. Mantieni la sessione viva ───────────────────────────────────────
+      # ─── 6. Mantieni la sessione viva ───────────────────────────────────────
       - name: Keep session alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
@@ -134,8 +141,11 @@ jobs:
             REMAINING=$(( (SLEEP_SECONDS - ELAPSED) / 60 ))
             [ $REMAINING -gt 0 ] && echo "⏳ $REMAINING minuti rimanenti"
 
-            # Riavvia RustDesk se il processo è morto
-            pgrep -q rustdesk || nohup "$RUSTDESK_BIN" --server >> /tmp/rustdesk.log 2>&1 &
+            # Watchdog: riavvia se il processo è morto
+            pgrep -q rustdesk || {
+              echo "⚠️ RustDesk non attivo, riavvio..."
+              nohup "$RUSTDESK_BIN" --server >> /tmp/rustdesk.log 2>&1 &
+            }
           done
 
           echo "✅ Sessione terminata."
