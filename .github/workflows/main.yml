@@ -16,29 +16,29 @@ on:
 
 jobs:
   remote-desktop:
-    runs-on: ubuntu-latest  # ← Cambiato! Ora usa un computer gratuito di GitHub nel cloud
+    runs-on: ubuntu-latest
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa l'ambiente desktop (Linux) ──────────────────────────────
+      # ─── 1. Installa l'ambiente desktop (Linux Silenzioso) ──────────────────
       - name: Install Desktop Environment and noVNC
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          # Installa un desktop leggero (XFCE), un server grafico virtuale (Xvfb) e il server VNC
-          sudo apt-get install -y xfce4 xfce4-goodies xvfb x11vnc python3-pip git
+          # Installazione super leggera e senza domande interattive
+          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git
           
           # Scarica noVNC
+          rm -rf /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
 
       # ─── 2. Avvia lo schermo virtuale e il Desktop ──────────────────────────
       - name: Start Virtual Screen and XFCE
         run: |
-          # Crea uno schermo virtuale (Display :1)
           Xvfb :1 -screen 0 1280x720x24 &
           sleep 3
-          
-          # Avvia l'interfaccia grafica dentro lo schermo virtuale
           DISPLAY=:1 startxfce4 &
 
       # ─── 3. Avvia il Server VNC con Password ────────────────────────────────
@@ -51,7 +51,6 @@ jobs:
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
 
-          # Avvia il server VNC sullo schermo virtuale
           nohup x11vnc -display :1 -passwd "$VNC_PASS" -forever -shared -rfbport 5900 > /tmp/x11vnc.log 2>&1 &
           sleep 3
 
@@ -64,6 +63,7 @@ jobs:
       # ─── 5. Tunnel localhost.run ─────────────────────────────────────────────
       - name: Start tunnel
         run: |
+          mkdir -p ~/.ssh
           ssh-keygen -t ed25519 -f /tmp/tunnel_key -N "" -q
           nohup ssh -i /tmp/tunnel_key -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -R 80:localhost:6080 nokey@localhost.run > /tmp/tunnel.log 2>&1 &
           
@@ -81,7 +81,7 @@ jobs:
       - name: Display connection info
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          END_TIME=$(date -d "+$SESSION_DURATION minutes" "+%H:%M UTC" 2>/dev/null || date -v+"${SESSION_DURATION}M" "+%H:%M UTC")
+          END_TIME=$(python3 -c "import datetime; print((datetime.datetime.utcnow() + datetime.timedelta(minutes=$SESSION_DURATION)).strftime('%H:%M UTC'))")
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
