@@ -20,21 +20,32 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Installa gli strumenti necessari ──────────────────────────────
-      - name: Install Network and Display Tools
+      # ─── 1. Installa Ngrok e gli strumenti necessari ──────────────────────
+      - name: Install Network Tools on macOS
         run: |
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Avvia la porta grafica (Corretto senza errori di riga) ────────
-      - name: Start Independent VNC Server
+      # ─── 2. Forza macOS a creare uno schermo virtuale attivo ──────────────
+      - name: Activate macOS Virtual Display
         run: |
-          python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 5900)); s.listen(1); print('Pronto')" &
-          sleep 3
+          # Diciamo al sistema di attivare la modalità remota multiutente
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysStartOnConsole -bool true
+          
+          # Impostiamo la password VNC di sistema in modo nativo
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvncpasswd -vncpasswd "${{ github.event.inputs.vnc_password }}"
+          
+          # Avviamo il servizio di condivisione dello schermo Apple
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -restart -agent -privs -all
+          
+          echo "✅ Schermo virtuale macOS attivato!"
 
       # ─── 3. Connetti il Tunnel Ngrok ──────────────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
+          # Colleghiamo websockify al VNC nativo di Apple (porta 5900) sulla porta web 6080
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
           
@@ -66,7 +77,7 @@ jobs:
       - name: Display Connection Link
         run: |
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO AMBIENTE CLOUD È IN LINEA!                   ║"
+          echo "║       🍏 IL TUO MAC OS NATIVO È IN LINEA!                    ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
