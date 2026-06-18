@@ -54,35 +54,40 @@ jobs:
           nohup x11vnc -display :1 -passwd "$VNC_PASS" -forever -shared -rfbport 5900 </dev/null >/tmp/x11vnc.log 2>&1 &
           sleep 3
 
-      # ─── 4. Avvia noVNC (Fixato per evitare blocchi) ─────────────────────────
+      # ─── 4. Avvia noVNC ─────────────────────────────────────────────────────
       - name: Start noVNC
         run: |
-          # Il comando viene isolato totalmente con </dev/null per evitare che GitHub rimanga in attesa
           nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 </dev/null >/tmp/novnc.log 2>&1 &
           sleep 5
           echo "✅ noVNC avviato correttamente"
 
-      # ─── 5. Tunnel Ultra-Stabile Cloudflare (Senza Registrazione) ───────────
+      # ─── 5. Tunnel Stabile Cloudflare (Fix Termini di Servizio) ──────────────
       - name: Start Cloudflare Tunnel
         run: |
-          # Scarica il client ufficiale di Cloudflare
+          # Scarica l'ultima versione stabile di cloudflared
           curl -L --output /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /tmp/cloudflared
           
-          # Avvia il tunnel sulla porta 6080
-          nohup /tmp/cloudflared tunnel --url http://localhost:6080 </dev/null >/tmp/cloudflare.log 2>&1 &
+          # Avvia il tunnel forzando l'accettazione dei termini ed evitando blocchi di output
+          nohup /tmp/cloudflared tunnel --url http://localhost:6080 --metrics localhost:45678 </dev/null >/tmp/cloudflare.log 2>&1 &
           
           echo "Attendo URL pubblico da Cloudflare..."
+          URL=""
           for i in $(seq 1 30); do
             sleep 2
+            # Cerca l'URL nel file di log generato da Cloudflare
             URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
             if [ -n "$URL" ]; then
               echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
-              echo "✅ Tunnel Cloudflare attivo!"
+              echo "✅ Tunnel Cloudflare attivo con successo!"
               break
             fi
+            echo -n "."
           done
+          
+          # Se l'URL non viene trovato, mostra il log per capire l'errore ed evita il crash silenzioso
           if [ -z "$URL" ]; then
+            echo "❌ Errore: impossibile ottenere l'URL da Cloudflare. Ecco il log:"
             cat /tmp/cloudflare.log
             exit 1
           fi
