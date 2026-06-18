@@ -27,28 +27,35 @@ jobs:
           sudo sysadminctl -newPassword "${{ github.event.inputs.vnc_password }}" -resetPasswordFor /Users/$USER
           echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
-      # ─── 2. Installa gli strumenti di rete (Corretto per PEP 668) ─────────
+      # ─── 2. Installa gli strumenti di rete ────────────────────────────────
       - name: Install Network Tools on macOS
         run: |
           brew install ngrok
-          # Usiamo il flag per superare il blocco dell'ambiente gestito esternamente
           pip3 install websockify --break-system-packages
 
-      # ─── 3. Avvia websockify e il Tunnel Ngrok ────────────────────────────
+      # ─── 3. Avvia websockify e il Tunnel Ngrok col nuovo Token ─────────────
       - name: Connect Ngrok Tunnel
         run: |
+          # Avviamo websockify sulla porta 6080
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
-          sleep 3
+          sleep 5
           
-          ngrok config add-authtoken "cr_3FIY7tk5cyBNpguY03YAleOod2W"
+          # Inseriamo il tuo nuovo codice token appena generato
+          ngrok config add-authtoken "cr_3FIbuhVDkK6kYmIzEGehH3flG2o"
+          
+          # Lanciamo il tunnel http
           nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
-          sleep 8
+          sleep 12
           
+          # Recuperiamo l'URL pubblico generato da Ngrok
           URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
+          
           if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
-            echo "Errore tunnel Ngrok"
+            echo "❌ Errore dettagliato di Ngrok dal file di log:"
+            cat /tmp/ngrok.log
             exit 1
           fi
+          
           CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
           echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
 
