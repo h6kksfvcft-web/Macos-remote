@@ -16,18 +16,19 @@ jobs:
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
           echo "✅ VNC Apple pronto sulla porta 5900!"
 
-      # ─── 2. Scarica e avvia il tunnel Bore (Nessun account, 2 secondi) ───
+      # ─── 2. Installa Bore tramite Homebrew (Sicuro al 100%) ──────────────
+      - name: Install Bore via Brew
+        run: |
+          brew install bore-cli
+
+      # ─── 3. Avvia il tunnel Bore ─────────────────────────────────────────
       - name: Start Bore Tunnel
         run: |
-          # Scarichiamo il programmino leggero di Bore per Mac
-          curl -LO https://github.com/ekmett/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-apple-darwin.tar.gz
-          tar -xzf bore-v0.5.1-x86_64-apple-darwin.tar.gz
-          
-          # Avviamo il tunnel sulla porta del VNC (5900) verso il server pubblico gratuito di bore
-          nohup ./bore local 5900 --to bore.pub </dev/null >/tmp/bore.log 2>&1 &
+          # Avviamo il tunnel verso il server pubblico gratuito di bore
+          nohup bore local 5900 --to bore.pub </dev/null >/tmp/bore.log 2>&1 &
           sleep 5
 
-      # ─── 3. Leggi il log e mostra l'indirizzo esatto ─────────────────────
+      # ─── 4. Leggi il log e mostra l'indirizzo esatto ─────────────────────
       - name: Get Connection Link
         run: |
           cat /tmp/bore.log
@@ -35,7 +36,7 @@ jobs:
           BORE_URL=$(grep -oE "bore.pub:[0-9]+" /tmp/bore.log | head -n 1)
           
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO MAC IN CLOUD È PRONTO (STAVOLTA DAVVERO!)     ║"
+          echo "║       🍏 IL TUO MAC IN CLOUD È PRONTO!                       ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  Apri l'app RealVNC Viewer sul tuo iPhone e inserisci:       ║"
@@ -45,6 +46,6 @@ jobs:
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 4. Mantieni vivo il Mac ─────────────────────────────────────────
+      # ─── 5. Mantieni vivo il Mac ─────────────────────────────────────────
       - name: Keep Alive
         run: sleep 3600
