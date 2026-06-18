@@ -32,21 +32,21 @@ jobs:
           # Spegniamo il firewall di macOS per evitare blocchi locali
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
-          # 1. Cambiamo la password dell'utente di sistema 'runner' direttamente nel database di macOS
-          sudo dscl . -passwd /Users/runner "${{ github.event.inputs.vnc_password }}"
+          # 1. Cambiamo la password dell'utente 'runner' in modo forzato (Bypassa la vecchia password)
+          sudo sysadminctl -adminUser "runner" -password "${{ github.event.inputs.vnc_password }}"
           
           # 2. Abilitiamo l'accesso VNC legacy globale nelle preferenze
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
           
-          # 3. Impostiamo la password VNC generica per sicurezza
+          # 3. Impostiamo la password VNC generica per sicurezza nel kickstart
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvnclegacy yes
             
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvncpw "${{ github.event.inputs.vnc_password }}"
           
-          # 4. Diamo esplicitamente TUTTI i permessi di controllo remoto all'utente 'runner'
+          # 4. Diamo i permessi di controllo remoto all'utente 'runner'
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -access -on -privs -all -users runner
           
@@ -54,7 +54,7 @@ jobs:
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -restart -agent
           
-          echo "✅ Password utente sincronizzata e Server Apple attivato!"
+          echo "✅ Password di sistema azzerata e Screen Sharing avviato!"
 
       # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
@@ -90,7 +90,7 @@ jobs:
       - name: Display Connection Link
         run: |
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO AMBIENGE DI TEST MAC OS È IN LINEA!          ║"
+          echo "║       🍏 IL TUO AMBIENTE DI TEST MAC OS È IN LINEA!          ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
