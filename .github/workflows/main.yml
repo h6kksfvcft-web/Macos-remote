@@ -1,4 +1,4 @@
-name: Stable Linux Desktop Cloud
+name: Uncrashable Linux Desktop Cloud
 
 on:
   workflow_dispatch:
@@ -20,18 +20,15 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ─── 1. Installa l'ambiente desktop ──────────────────────────────────────
+      # ─── 1. Installa l'ambiente desktop e noVNC nativo ───────────────────────
       - name: Install Desktop Environment and noVNC
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc python3 git curl dbus-x11 xinit
+          # Installiamo direttamente novnc e websockify dai repository ufficiali Ubuntu
+          sudo apt-get install -y --no-install-recommends xfce4 xfce4-session xvfb x11vnc novnc websockify dbus-x11 xinit curl
           
-          rm -rf /tmp/noVNC
-          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
-          git clone --depth 1 https://github.com/novnc/websockify /tmp/noVNC/utils/websockify
-
       # ─── 2. Avvia lo schermo virtuale e il Desktop ──────────────────────────
       - name: Start Virtual Screen and XFCE
         run: |
@@ -51,48 +48,42 @@ jobs:
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
 
+          # Avvia x11vnc agganciato stabilmente allo schermo :1
           nohup x11vnc -display :1 -passwd "$VNC_PASS" -forever -shared -rfbport 5900 </dev/null >/tmp/x11vnc.log 2>&1 &
           sleep 3
 
-      # ─── 4. Avvia noVNC ─────────────────────────────────────────────────────
-      - name: Start noVNC
+      # ─── 4. Avvia il Proxy noVNC Nativo (Senza Crash) ────────────────────────
+      - name: Start noVNC Proxy
         run: |
-          nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 </dev/null >/tmp/novnc.log 2>&1 &
+          # Usiamo l'eseguibile di sistema che reindirizza in modo stabile la porta 5900 sulla 6080
+          nohup websockify --web /usr/share/novnc/ 6080 localhost:5900 </dev/null >/tmp/novnc.log 2>&1 &
           sleep 5
-          echo "✅ noVNC avviato correttamente"
+          echo "✅ noVNC Proxy di sistema attivato!"
 
-      # ─── 5. Tunnel Stabile Cloudflare (Fix Termini di Servizio) ──────────────
+      # ─── 5. Tunnel Stabile Cloudflare ───────────────────────────────────────
       - name: Start Cloudflare Tunnel
         run: |
-          # Scarica l'ultima versione stabile di cloudflared
           curl -L --output /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
           chmod +x /tmp/cloudflared
           
-          # Avvia il tunnel forzando l'accettazione dei termini ed evitando blocchi di output
-          nohup /tmp/cloudflared tunnel --url http://localhost:6080 --metrics localhost:45678 </dev/null >/tmp/cloudflare.log 2>&1 &
+          nohup /tmp/cloudflared tunnel --url http://localhost:6080 </dev/null >/tmp/cloudflare.log 2>&1 &
           
           echo "Attendo URL pubblico da Cloudflare..."
-          URL=""
           for i in $(seq 1 30); do
             sleep 2
-            # Cerca l'URL nel file di log generato da Cloudflare
             URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
             if [ -n "$URL" ]; then
               echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
-              echo "✅ Tunnel Cloudflare attivo con successo!"
+              echo "✅ Tunnel Cloudflare attivo!"
               break
             fi
-            echo -n "."
           done
-          
-          # Se l'URL non viene trovato, mostra il log per capire l'errore ed evita il crash silenzioso
           if [ -z "$URL" ]; then
-            echo "❌ Errore: impossibile ottenere l'URL da Cloudflare. Ecco il log:"
             cat /tmp/cloudflare.log
             exit 1
           fi
 
-      # ─── 6. Mostra il link finale per connetterti ───────────────────────────
+      # ─── 6. Mostra il link per connetterti ──────────────────────────────────
       - name: Display connection info
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
@@ -100,7 +91,7 @@ jobs:
 
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO!                      ║"
+          echo "║       🖥️  IL TUO DESKTOP CLOUD È FINALMENTE PRONTO!           ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
