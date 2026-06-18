@@ -9,36 +9,48 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Attiva il VNC nativo di Apple ────────────────────────────────
+      # ─── 1. Attiva lo Screen Sharing nativo del Mac ──────────────────────
       - name: Enable Apple Remote Desktop
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ Screen Sharing Apple attivo sulla porta 5900!"
+          echo "✅ VNC Apple attivo sulla porta 5900!"
 
-      # ─── 2. Apri il tunnel con Serveo su porta fissa ─────────────────────
-      - name: Start Free Serveo Tunnel
+      # ─── 2. Installa l'interfaccia Web per il VNC (noVNC) ─────────────────
+      - name: Install Web VNC Interface
         run: |
-          # Chiediamo esplicitamente a serveo di mappare la porta 15900 remota sulla nostra 5900 locale
-          # Il flag -N risolve il problema dello pseudo-terminale
-          nohup ssh -o StrictHostKeyChecking=no -N -R 15900:localhost:5900 serveo.net </dev/null >/tmp/serveo.log 2>&1 &
+          brew install node
+          npm install -g websockify
+          git clone --depth 1 https://github.com/novnc/noVNC.git $HOME/noVNC
+          cp $HOME/noVNC/vnc.html $HOME/noVNC/index.html
+          # Avvia il proxy web sulla porta 6080 che punta al VNC del Mac
+          nohup websockify --web=$HOME/noVNC 6080 localhost:5900 </dev/null >/tmp/websockify.log 2>&1 &
+          sleep 5
+
+      # ─── 3. Avvia il Tunnel indistruttibile con Localhost.run ────────────
+      - name: Start Localhost.run Tunnel
+        run: |
+          # Questo tunnel assegna un dominio HTTP automatico sulla porta web 6080
+          nohup ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 localhost.run </dev/null >/tmp/tunnel.log 2>&1 &
           sleep 10
 
-      # ─── 3. Controlla e Mostra i dati di connessione ─────────────────────
+      # ─── 4. Estrai il link finale e stampalo ─────────────────────────────
       - name: Get Connection Link
         run: |
-          cat /tmp/serveo.log
+          cat /tmp/tunnel.log
+          # Estraiamo l'indirizzo web unico assegnato
+          WEB_URL=$(grep -oE "https://[a-zA-Z0-9.-]+\.localhost\.run" /tmp/tunnel.log | head -n 1)
+          
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO VERO MAC OS IN CLOUD È PRONTO!               ║"
+          echo "║       🍏 IL TUO VERO MAC OS VIA WEB È PRONTO!                ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  Apri l'app VNC Viewer sul tuo iPhone e inserisci:           ║"
+          echo "║  Apri questo link direttamente sul browser del tuo iPhone:  ║"
           echo "║                                                              ║"
-          echo "║  👉 INDIRIZZO:  serveo.net:15900                             ║"
-          echo "║  👉 PASSWORD:   Simona26                                     ║"
+          echo "║  👉 $WEB_URL/index.html?autoconnect=true&password=Simona26   ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 4. Mantieni vivo il Mac ─────────────────────────────────────────
+      # ─── 5. Mantieni vivo il Mac ─────────────────────────────────────────
       - name: Keep Alive
         run: sleep 3600
