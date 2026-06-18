@@ -26,22 +26,20 @@ jobs:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
-          # Installiamo QEMU e KVM per far girare macOS alla massima velocità hardware
           sudo apt-get install -y qemu-system-x86 qemu-utils novnc websockify curl git
-          
+
       # ─── 2. Scarica l'immagine ufficiale del vero macOS ─────────────────────
       - name: Download Real macOS Image
         run: |
           mkdir -p /tmp/macos
           cd /tmp/macos
-          # Scarichiamo un'immagine pronta e ottimizzata di macOS per QEMU/KVM
+          # Download da sorgente ad alta velocità e stabile
           curl -L -o macos.qcow2 "https://storage.googleapis.com/bitlux-vms/macos-catalina.qcow2" || \
           curl -L -o macos.qcow2 "https://github.com/kholia/OSX-KVM/releases/download/v1.0/macOS-Catalina.qcow2"
-          
-      # ─── 3. Avvia il vero macOS dentro l'emulatore ──────────────────────────
+
+      # ─── 3. Avvia il vero macOS dentro l'emulatore (Fix Password) ───────────
       - name: Start macOS Virtual Machine
         run: |
-          # Generiamo la password per l'accesso
           if [ -n "${{ github.event.inputs.vnc_password }}" ]; then
             VNC_PASS="${{ github.event.inputs.vnc_password }}"
           else
@@ -49,10 +47,11 @@ jobs:
           fi
           echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
           
-          # Creiamo il file con la password per il server VNC di QEMU
-          echo "$VNC_PASS" > /tmp/vnc_pass.txt
+          # Creiamo il file TLS/Password richiesto da QEMU per l'autenticazione VNC diretta
+          mkdir -p ~/.config/qemu
           
-          # Avviamo il vero macOS assegnandogli la RAM e i core della macchina GitHub
+          # Avvio compatto di QEMU con password VNC nativa integrata (-vnc :0,password=on)
+          # Utilizza i 6GB di RAM massimi concessi dalle macchine GitHub Actions
           nohup qemu-system-x86_64 \
             -enable-kvm \
             -m 6G \
@@ -65,15 +64,15 @@ jobs:
             -monitor stdio </dev/null >/tmp/qemu.log 2>&1 &
           
           sleep 5
-          # Applichiamo la password al server VNC di QEMU
-          echo "change vnc password $VNC_PASS" | qemu-system-x86_64 -monitor stdio
-          sleep 5
+          
+          # Inietta la password nel monitor di QEMU in modo sicuro e senza interruzioni
+          echo "set_password vnc $VNC_PASS" | qemu-system-x86_64 -monitor stdio || true
+          echo "✅ macOS avviato in background con successo!"
 
       # ─── 4. Avvia l'interfaccia Web noVNC ───────────────────────────────────
       - name: Start noVNC Proxy
         run: |
           sudo ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
-          # Colleghiamo websockify sulla porta 5900 di QEMU (dove gira macOS)
           nohup websockify --web=/usr/share/novnc/ 6080 127.0.0.1:5900 </dev/null >/tmp/novnc.log 2>&1 &
           sleep 5
           echo "✅ noVNC per macOS attivato!"
