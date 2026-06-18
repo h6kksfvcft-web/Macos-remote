@@ -26,28 +26,35 @@ jobs:
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
+      # ─── 2. Forza la password dell'utente e attiva lo Screen Sharing ─────
       - name: Enable Native macOS Screen Sharing
         run: |
           # Spegniamo il firewall di macOS per evitare blocchi locali
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
-          # Abilitiamo l'accesso VNC legacy globale nelle preferenze
+          # 1. Cambiamo la password dell'utente di sistema 'runner' direttamente nel database di macOS
+          sudo dscl . -passwd /Users/runner "${{ github.event.inputs.vnc_password }}"
+          
+          # 2. Abilitiamo l'accesso VNC legacy globale nelle preferenze
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
           
-          # Configura i parametri uno alla volta per evitare l'errore "Extra arguments"
+          # 3. Impostiamo la password VNC generica per sicurezza
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvnclegacy yes
             
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvncpw "${{ github.event.inputs.vnc_password }}"
           
-          # Attiva il servizio nativo e riavvia l'agente grafico
+          # 4. Diamo esplicitamente TUTTI i permessi di controllo remoto all'utente 'runner'
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on -privs -all -restart -agent
+            -configure -access -on -privs -all -users runner
           
-          echo "✅ Server nativo Apple configurato e attivato correttamente!"
+          # 5. Attiviamo e riavviamo l'agente grafico
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -restart -agent
+          
+          echo "✅ Password utente sincronizzata e Server Apple attivato!"
 
       # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
@@ -83,7 +90,7 @@ jobs:
       - name: Display Connection Link
         run: |
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO AMBIENTE DI TEST MAC OS È IN LINEA!          ║"
+          echo "║       🍏 IL TUO AMBIENGE DI TEST MAC OS È IN LINEA!          ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
