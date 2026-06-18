@@ -1,17 +1,17 @@
-name: GUI macOS 26 Nativa ARM64
+name: GUI macOS 26 Corretto per Tahoe
 
 on: 
-  workflow_dispatch: # Avvio manuale con un clic
+  workflow_dispatch:
 
 jobs:
   interfaccia-grafica:
-    runs-on: macos-26 # Esegue su Apple Silicon ARM64 di serie
+    runs-on: macos-26
 
     steps:
       - name: Checkout del codice
         uses: actions/checkout@v4
 
-      # 1. Configura lo schermo e crea la password dinamica
+      # Configura lo schermo con comandi specifici per macOS Tahoe
       - name: Configura Schermo con Password Casuale
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -19,26 +19,24 @@ jobs:
           echo "LA TUA PASSWORD DI ACCESSO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Cambia la password dell'utente "runner" del Mac
-          echo -e "$DYNAMIC_PASS\n$DYNAMIC_PASS" | sudo passwd runner
+          # Cambia la password in modo forzato senza chiedere la vecchia (specifico per macOS)
+          sudo sysadminctl -deleteUserPassword runner
+          sudo sysadminctl -resetPasswordFor runner -newPassword "$DYNAMIC_PASS"
           
-          # Attiva la condivisione dello schermo ufficiale Apple
+          # Attiva la condivisione schermo con la sintassi corretta per Tahoe
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
-            -grantprivs -all \
+            -privs -all \
             -restart -agent
 
-      # 2. Avvia il tunnel scaricando tmate tramite Homebrew ma ignorando i warning di deprecazione
+      # Installa tmate e blocca la sessione per l'uso
       - name: Installa e Avvia Tunnel Grafico
         run: |
-          echo "Installazione di tmate in corso..."
           export HOMEBREW_NO_ENV_HINTS=1
           brew install tmate --quiet
           
-          # Configura la chiave SSH necessaria per avviare la sessione
           ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
-          echo "Avvio della sessione del tunnel..."
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           
@@ -47,5 +45,7 @@ jobs:
           tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           echo "=================================================="
           
-          # Mantiene il Mac online per permetterti l'uso visivo
-          while [ -f /tmp/tmate.sock ]; do sleep 5; done
+          # Forza il mantenimento dello stato attivo della macchina
+          while [ -f /tmp/tmate.sock ]; do 
+            sleep 5
+          done
