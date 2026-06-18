@@ -17,7 +17,7 @@ on:
 jobs:
   native-apple:
     # 🍏 Diciamo a GitHub di darci un VERO computer Apple fisico
-    runs-on: macos-13
+    runs-on: macos-latest
     timeout-minutes: 60
 
     steps:
