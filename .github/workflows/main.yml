@@ -1,54 +1,36 @@
-name: Mac OS con Bore (Vero VNC)
+name: GUI macOS 26 Senza Secret
 
-on:
-  workflow_dispatch:
+on: 
+  workflow_dispatch: # Avvio manuale con un clic
 
 jobs:
-  macos-desktop:
-    runs-on: macos-latest
-    timeout-minutes: 60
+  interfaccia-grafica:
+    runs-on: macos-26
 
     steps:
-      # ─── 1. Forza la password VNC senza toccare gli utenti di sistema ─────
-      - name: Enable Apple Remote Desktop with VNC Password
+      - name: Checkout del codice
+        uses: actions/checkout@v4
+
+      # Genera una password casuale dinamica e configura lo schermo
+      - name: Configura Schermo con Password Casuale
         run: |
-          # Attiviamo lo Screen Sharing nativo
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
+          # Genera una stringa casuale di 12 caratteri
+          DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
+          echo "=================================================="
+          echo "LA TUA PASSWORD VNC TEMPORANEA È: $DYNAMIC_PASS"
+          echo "=================================================="
           
-          # Configura la password VNC universale scavalcando i blocchi di sistema
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ VNC Apple sbloccato con password universale!"
-
-      # ─── 2. Installa Bore tramite Homebrew ──────────────────────────────────────
-      - name: Install Bore via Brew
-        run: |
-          brew install bore-cli
-
-      # ─── 3. Avvia il tunnel Bore ────────────────────────────────────────────────
-      - name: Start Bore Tunnel
-        run: |
-          nohup bore local 5900 --to bore.pub </dev/null >/tmp/bore.log 2>&1 &
-          sleep 5
-
-      # ─── 4. Leggi il log e mostra l'indirizzo esatto ─────────────────────────────
-      - name: Get Connection Link
-        run: |
-          cat /tmp/bore.log
-          BORE_URL=$(grep -oE "bore.pub:[0-9]+" /tmp/bore.log | head -n 1)
+          # Salva la password nel sistema del Mac virtuale
+          mkdir -p ~/.vnc
+          echo "$DYNAMIC_PASS" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
           
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO MAC IN CLOUD È PRONTO!                       ║"
-          echo "╠══════════════════════════════════════════════════════════════╣"
-          echo "║                                                              ║"
-          echo "║  Apri l'app RealVNC Viewer sul tuo iPhone e inserisci:       ║"
-          echo "║                                                              ║"
-          echo "║  👉 INDIRIZZO:  $BORE_URL                                    ║"
-          echo "║                                                              ║"
-          echo "║  Quando ti connetti lascia il campo USERNAME VUOTO e metti:  ║"
-          echo "║  👉 PASSWORD:   Simona26                                     ║"
-          echo "║                                                              ║"
-          echo "╚══════════════════════════════════════════════════════════════╝"
+          # Attiva la condivisione dello schermo macOS ufficiale
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvncpasswd -vncpasswd "$DYNAMIC_PASS" \
+            -restart -agent -privs -all
 
-      # ─── 5. Mantieni vivo il Mac ────────────────────────────────────────────────
-      - name: Keep Alive
-        run: sleep 3600
+      # Avvia il tunnel tmate per darti i link di accesso
+      - name: Avvia il Tunnel per la GUI
+        uses: mxschmitt/action-tmate@v3
