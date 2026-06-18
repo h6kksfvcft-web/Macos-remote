@@ -1,11 +1,11 @@
-name: GUI macOS 26 Nativa Senza Errori
+name: GUI macOS 26 Nativa ARM64
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
 
 jobs:
   interfaccia-grafica:
-    runs-on: macos-26
+    runs-on: macos-26 # Esegue su Apple Silicon ARM64 di serie
 
     steps:
       - name: Checkout del codice
@@ -28,22 +28,24 @@ jobs:
             -grantprivs -all \
             -restart -agent
 
-      # 2. Avvia il tunnel remoto nativo senza usare "actions" esterne buggate
-      - name: Avvia il Tunnel per la GUI
+      # 2. Avvia il tunnel scaricando tmate tramite Homebrew ma ignorando i warning di deprecazione
+      - name: Installa e Avvia Tunnel Grafico
         run: |
-          echo "Avvio del tunnel di comunicazione sicuro..."
-          # Scarica il binario ufficiale standalone ed esegue il tunnel al volo
-          curl -sL https://github.com | tar JKv -C /tmp/
+          echo "Installazione di tmate in corso..."
+          export HOMEBREW_NO_ENV_HINTS=1
+          brew install tmate --quiet
           
-          # Genera la chiave di sessione e mostra i link direttamente nei log
+          # Configura la chiave SSH necessaria per avviare la sessione
           ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
-          /tmp/tmate-2.4.0-static-linux-amd64/tmate -S /tmp/tmate.sock new-session -d
-          /tmp/tmate-2.4.0-static-linux-amd64/tmate -S /tmp/tmate.sock wait tmate-ready
+          
+          echo "Avvio della sessione del tunnel..."
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait tmate-ready
           
           echo "=================================================="
-          echo "LINK PER CONNETTERTI AL MAC VIRTUALE:"
-          /tmp/tmate-2.4.0-static-linux-amd64/tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
+          echo "LINK PER CONNETTERTI IN INTERFACCIA GRAFICA:"
+          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           echo "=================================================="
           
-          # Mantiene il Mac attivo per permetterti di usarlo
+          # Mantiene il Mac online per permetterti l'uso visivo
           while [ -f /tmp/tmate.sock ]; do sleep 5; done
