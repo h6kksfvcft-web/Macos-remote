@@ -53,7 +53,7 @@ jobs:
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 3
           
-          # ⚠️ INSERISCI IL TUO TOKEN NGROK AL POSTO DI: IL_TUO_TOKEN_QUI
+          # ⚠️ Inserisci qui il tuo token o usa i GitHub Secrets per maggiore sicurezza
           ngrok config add-authtoken "cr_3FIY7tk5cyBNpguY03YAleOod2W"
           
           # Lanciamo il tunnel sulla porta web
@@ -95,4 +95,6 @@ jobs:
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
+          # ✅ Corretto il refuso della 's-' finale per permettere il corretto funzionamento del timer
           sleep $SLEEP_SECONDS
+
