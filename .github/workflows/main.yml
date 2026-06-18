@@ -20,12 +20,11 @@ jobs:
     timeout-minutes: 65
 
     steps:
-      # ─── 1. Scarica, estrai e configura Ngrok ───────────────────────────
-      - name: Download and Configure Ngrok
+      # ─── 1. Installa Ngrok ufficialmente tramite Chocolatey ──────────────
+      - name: Install and Configure Ngrok
         run: |
-          Invoke-WebRequest https://bin.equinox.io/c/bNy7g2WDWkM/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-          Expand-Archive ngrok.zip -DestinationPath C:\ngrok
-          C:\ngrok\ngrok.exe config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
+          choco install ngrok --no-progress -y
+          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
 
       # ─── 2. Attiva il Desktop Remoto (RDP) ufficiale di Windows ──────────
       - name: Enable Remote Desktop (RDP)
@@ -43,7 +42,7 @@ jobs:
       # ─── 4. Avvia il Tunnel Ngrok in modalità TCP ───────────────────────
       - name: Start Ngrok TCP Tunnel
         run: |
-          Start-Process C:\ngrok\ngrok.exe -ArgumentList "tcp 3389" -WindowStyle Hidden
+          Start-Process ngrok -ArgumentList "tcp 3389" -WindowStyle Hidden
           Start-Sleep -Seconds 10
 
       # ─── 5. Estrai i dati di connessione per l'App ───────────────────────
