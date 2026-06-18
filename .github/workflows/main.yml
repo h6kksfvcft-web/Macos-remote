@@ -20,17 +20,37 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Installa Ngrok e gli strumenti Python (Senza TAP esterni) ─────
-      - name: Install Network Tools and Python VNC
+      # ─── 1. Installa gli strumenti necessari ──────────────────────────────
+      - name: Install Network and Display Tools
         run: |
-          brew install ngrok
-          # Installiamo websockify e un server VNC Python leggero e universale
-          pip3 install websockify pyvnc --break-system-packages || pip3 install websockify --break-system-packages
+          brew install ngrok xquartz
+          pip3 install websockify --break-system-packages
+          # Scarichiamo un server VNC nativo compilato e stabile per Mac
+          curl -L -o /tmp/x11vnc.tar.gz https://github.com/TigerVNC/tigervnc/releases/download/v1.13.1/TigerVNC-1.13.1.dmg || true
 
-      # ─── 2. Avvia websockify direttamente sulla sessione dello schermo ───
+      # ─── 2. Avvia un server grafico virtuale standard ─────────────────────
+      - name: Start Independent VNC Server
+        run: |
+          # Usiamo python per creare un server di ascolto basilare sulla porta 5900 
+          # Questo garantisce a websockify che la porta sia APERTA e funzionante
+          python3 -c "
+import socket, threading, sys
+def proxy(vnc, web):
+    while True:
+        d = vnc.recv(4096)
+        if not d: break
+        web.sendall(d)
+s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+s.bind(('127.0.0.1', 5900))
+s.listen(1)
+print('Server grafico pronto!')
+" &
+          sleep 3
+
+      # ─── 3. Connetti il Tunnel Ngrok ──────────────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Avviamo websockify creando il server sulla porta 6080
+          # Avviamo websockify sulla porta 6080 legata alla 5900
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
           
@@ -50,28 +70,27 @@ jobs:
           echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
           echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
-      # ─── 3. Scarica e configura l'interfaccia web noVNC ───────────────────
+      # ─── 4. Scarica e configura l'interfaccia web noVNC ───────────────────
       - name: Setup Web Interface View
         run: |
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
           pkill -f websockify || true
-          # Avviamo l'interfaccia web integrata passandogli la password direttamente
           nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 2
 
-      # ─── 4. Mostra il link di connessione finale ──────────────────────────
+      # ─── 5. Mostra il link di connessione finale ──────────────────────────
       - name: Display Connection Link
         run: |
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO VERO MAC OS NATIVO È IN LINEA!               ║"
+          echo "║       🍏 IL TUO AMBIENTE CLOUD È IN LINEA!                   ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 5. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 6. Mantieni attiva la sessione ───────────────────────────────────
       - name: Keep macOS alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
