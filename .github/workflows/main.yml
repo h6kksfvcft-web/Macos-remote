@@ -9,30 +9,31 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Attiva lo Screen Sharing nativo di Apple ─────────────────────
-      - name: Enable Apple Remote Desktop
+      # ─── 1. Configura l'utente e attiva lo Screen Sharing con permessi totali ───
+      - name: Enable Apple Remote Desktop with User
         run: |
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ VNC Apple pronto sulla porta 5900!"
+          # Impostiamo la password per l'utente corrente 'runner'
+          sudo dscl . -passwd /Users/runner Simona26
+          
+          # Attiviamo il servizio per l'utente runner
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -users runner
+          echo "✅ VNC Apple configurato per l'utente runner!"
 
-      # ─── 2. Installa Bore tramite Homebrew (Sicuro al 100%) ──────────────
+      # ─── 2. Installa Bore tramite Homebrew ──────────────────────────────────────
       - name: Install Bore via Brew
         run: |
           brew install bore-cli
 
-      # ─── 3. Avvia il tunnel Bore ─────────────────────────────────────────
+      # ─── 3. Avvia il tunnel Bore ────────────────────────────────────────────────
       - name: Start Bore Tunnel
         run: |
-          # Avviamo il tunnel verso il server pubblico gratuito di bore
           nohup bore local 5900 --to bore.pub </dev/null >/tmp/bore.log 2>&1 &
           sleep 5
 
-      # ─── 4. Leggi il log e mostra l'indirizzo esatto ─────────────────────
+      # ─── 4. Leggi il log e mostra l'indirizzo esatto ─────────────────────────────
       - name: Get Connection Link
         run: |
           cat /tmp/bore.log
-          # Estraiamo l'indirizzo esatto assegnato da Bore (es. bore.pub:12345)
           BORE_URL=$(grep -oE "bore.pub:[0-9]+" /tmp/bore.log | head -n 1)
           
           echo "╔══════════════════════════════════════════════════════════════╗"
@@ -42,10 +43,13 @@ jobs:
           echo "║  Apri l'app RealVNC Viewer sul tuo iPhone e inserisci:       ║"
           echo "║                                                              ║"
           echo "║  👉 INDIRIZZO:  $BORE_URL                                    ║"
+          echo "║                                                              ║"
+          echo "║  Quando ti chiede le credenziali inserisci:                  ║"
+          echo "║  👉 USERNAME:   runner                                       ║"
           echo "║  👉 PASSWORD:   Simona26                                     ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 5. Mantieni vivo il Mac ─────────────────────────────────────────
+      # ─── 5. Mantieni vivo il Mac ────────────────────────────────────────────────
       - name: Keep Alive
         run: sleep 3600
