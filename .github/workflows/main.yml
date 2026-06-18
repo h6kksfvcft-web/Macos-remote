@@ -20,23 +20,23 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Forza la password usando sysadminctl (Evita l'errore eDSAuthFailed) ───
+      # ─── 1. Forza la password usando sysadminctl ──────────────────────────
       - name: Configure macOS User Password
         run: |
           sudo sysadminctl -deletePassword /Users/$USER
           sudo sysadminctl -newPassword "${{ github.event.inputs.vnc_password }}" -resetPasswordFor /Users/$USER
           echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
-      # ─── 2. Installa gli strumenti di rete ────────────────────────────────
+      # ─── 2. Installa gli strumenti di rete (Corretto per PEP 668) ─────────
       - name: Install Network Tools on macOS
         run: |
-          brew install ngrok python
-          pip3 install websockify
+          brew install ngrok
+          # Usiamo il flag per superare il blocco dell'ambiente gestito esternamente
+          pip3 install websockify --break-system-packages
 
       # ─── 3. Avvia websockify e il Tunnel Ngrok ────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Avviamo websockify sulla porta 6080 legata al VNC locale del Mac (5900)
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 3
           
