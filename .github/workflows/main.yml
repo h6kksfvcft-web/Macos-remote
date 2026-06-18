@@ -9,9 +9,9 @@ on:
         default: "30"
         type: string
       vnc_password:
-        description: "Password d'accesso"
+        description: "Password d'accesso (MASSIMO 8 CARATTERI!)"
         required: false
-        default: "SimoneLia2026"
+        default: "Simona26"
         type: string
 
 jobs:
@@ -26,35 +26,32 @@ jobs:
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Forza la password dell'utente e attiva lo Screen Sharing ─────
+      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
       - name: Enable Native macOS Screen Sharing
         run: |
-          # Spegniamo il firewall di macOS per evitare blocchi locali
+          # Spegniamo il firewall di macOS
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
-          # 1. Cambiamo la password dell'utente 'runner' in modo forzato (Bypassa la vecchia password)
-          sudo sysadminctl -adminUser "runner" -password "${{ github.event.inputs.vnc_password }}"
-          
-          # 2. Abilitiamo l'accesso VNC legacy globale nelle preferenze
+          # Configuriamo i database di Apple per accettare il VNC classico con password di 8 caratteri
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
           
-          # 3. Impostiamo la password VNC generica per sicurezza nel kickstart
+          # Impostiamo la password VNC legacy (Massimo 8 caratteri)
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvnclegacy yes
             
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvncpw "${{ github.event.inputs.vnc_password }}"
           
-          # 4. Diamo i permessi di controllo remoto all'utente 'runner'
+          # Abilitiamo l'accesso a tutti gli utenti senza restrizioni sul nome utente
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -access -on -privs -all -users runner
+            -configure -access -on -privs -all -allowAccessFor -allUsers
           
-          # 5. Attiviamo e riavviamo l'agente grafico
+          # Attiviamo e riavviamo l'agente grafico
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -restart -agent
           
-          echo "✅ Password di sistema azzerata e Screen Sharing avviato!"
+          echo "✅ Server nativo Apple configurato con password a 8 caratteri!"
 
       # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
