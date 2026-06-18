@@ -11,26 +11,24 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4
 
-      # Genera una password casuale dinamica e configura lo schermo
+      # Configura lo schermo usando i comandi nativi di macOS (Evita Errore 127)
       - name: Configura Schermo con Password Casuale
         run: |
-          # Genera una stringa casuale di 12 caratteri
+          # 1. Genera una password casuale dinamica e sicura
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
           echo "=================================================="
-          echo "LA TUA PASSWORD VNC TEMPORANEA È: $DYNAMIC_PASS"
+          echo "LA TUA PASSWORD DI ACCESSO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Salva la password nel sistema del Mac virtuale
-          mkdir -p ~/.vnc
-          echo "$DYNAMIC_PASS" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
+          # 2. Cambia la password dell'utente corrente ("runner") in macOS
+          echo -e "$DYNAMIC_PASS\n$DYNAMIC_PASS" | sudo passwd runner
           
-          # Attiva la condivisione dello schermo macOS ufficiale
+          # 3. Attiva il server della condivisione schermo nativo di Apple
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
-            -clientopts -setvncpasswd -vncpasswd "$DYNAMIC_PASS" \
-            -restart -agent -privs -all
+            -grantprivs -all \
+            -restart -agent
 
-      # Avvia il tunnel tmate per darti i link di accesso
+      # Avvia il tunnel tmate per darti i link di accesso alla macchina
       - name: Avvia il Tunnel per la GUI
         uses: mxschmitt/action-tmate@v3
