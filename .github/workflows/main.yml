@@ -6,10 +6,10 @@ on:
       session_duration:
         description: "Durata in minuti"
         required: false
-        default: "30"
+        default: "60"
         type: string
       vnc_password:
-        description: "Password d'accesso (MASSIMO 8 CARATTERI!)"
+        description: "Password (Esattamente 8 caratteri)"
         required: false
         default: "Simona26"
         type: string
@@ -17,84 +17,55 @@ on:
 jobs:
   native-apple:
     runs-on: macos-latest
-    timeout-minutes: 60
+    timeout-minutes: 65
 
     steps:
-      # ─── 1. Installa Ngrok e Websockify ──────────────────────────────────
-      - name: Install Network Tools
-        run: |
-          brew install ngrok
-          pip3 install websockify --break-system-packages
-
-      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
+      # ─── 1. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
       - name: Enable Native macOS Screen Sharing
         run: |
-          # Spegniamo il firewall di macOS
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
-          # Configuriamo i database di Apple per accettare il VNC classico con password di 8 caratteri
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
-          
-          # Impostiamo la password VNC legacy (Massimo 8 caratteri)
+          # Configura la password legacy di 8 caratteri
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy yes
-            
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvncpw "${{ github.event.inputs.vnc_password }}"
+            -configure -clientopts -setvnclegacy yes -setvncpw "${{ github.event.inputs.vnc_password }}"
           
-          # Abilitiamo l'accesso a tutti gli utenti senza restrizioni sul nome utente
+          # Abilita l'accesso completo per tutti gli utenti
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -access -on -privs -all -allowAccessFor -allUsers
           
-          # Attiviamo e riavviamo l'agente grafico
+          # Attiva il servizio
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -restart -agent
           
-          echo "✅ Server nativo Apple configurato con password a 8 caratteri!"
+          echo "✅ Server Apple pronto sulla porta 5900!"
 
-      # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
-      - name: Setup Web Interface View
+      # ─── 2. Apri il Tunnel TCP Gratuito tramite Serveo ────────────────────
+      - name: Start Free TCP Tunnel
         run: |
-          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
-          cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
+          # Avviamo un tunnel TCP sulla porta 5900 usando SSH (senza installare nulla)
+          ssh -o StrictHostKeyChecking=no -R 5900:localhost:5900 serveo.net > /tmp/serveo.log 2>&1 &
+          sleep 10
           
-          # Colleghiamo websockify (porta 6080) al server grafico del Mac (porta 5900)
-          nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
-          sleep 3
+          # Estraiamo l'indirizzo assegnato
+          SERVER_ADDR=$(grep -oE "forwarded to .+" /tmp/serveo.log | sed 's/forwarded to //')
+          echo "TCP_URL=$SERVER_ADDR" >> "$GITHUB_ENV"
 
-      # ─── 4. Connetti il Tunnel Ngrok in modalità HTTP ────────────────────
-      - name: Connect Ngrok HTTP Tunnel
-        run: |
-          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
-          
-          nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
-          sleep 12
-          
-          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
-          
-          if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
-            echo "❌ Errore tunnel Ngrok:"
-            cat /tmp/ngrok.log
-            exit 1
-          fi
-          
-          CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
-          echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
-          echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
-
-      # ─── 5. Mostra il link di connessione finale ──────────────────────────
-      - name: Display Connection Link
+      # ─── 3. Mostra i dati per l'applicazione mobile ───────────────────────
+      - name: Display Connection Details
         run: |
           echo "╔══════════════════════════════════════════════════════════════╗"
           echo "║       🍏 IL TUO AMBIENTE DI TEST MAC OS È IN LINEA!          ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
+          echo "║  Scarica l'app 'VNC Viewer' dal tuo App Store su iPhone.     ║"
+          echo "║  Crea una nuova connessione inserendo questi dati:           ║"
+          echo "║                                                              ║"
+          echo "║  👉 INDIRIZZO (Address): ${TCP_URL}"
+          echo "║  👉 PASSWORD:            ${{ github.event.inputs.vnc_password }}"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 6. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 4. Mantieni attiva la sessione ───────────────────────────────────
       - name: Keep macOS alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
