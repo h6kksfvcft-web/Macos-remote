@@ -12,35 +12,29 @@ jobs:
       # ─── 1. Attiva il VNC nativo di Apple ────────────────────────────────
       - name: Enable Apple Remote Desktop
         run: |
-          # Attiviamo il servizio di condivisione schermo nativo di macOS
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
-          
-          # Impostiamo la password "Simona26" per il VNC nativo
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ Screen Sharing Apple attivo sulla porta standard 5900!"
+          echo "✅ Screen Sharing Apple attivo sulla porta 5900!"
 
-      # ─── 2. Apri il tunnel con Serveo (Gratis, No Carta, No Telefono) ────
+      # ─── 2. Apri il tunnel con Serveo su porta fissa ─────────────────────
       - name: Start Free Serveo Tunnel
         run: |
-          # Usiamo l'SSH nativo del Mac per creare un tunnel verso il server pubblico gratuito Serveo
-          # Questo assegnerà una porta tcp remota per collegarti
-          nohup ssh -o StrictHostKeyChecking=no -R 0:localhost:5900 serveo.net </dev/null >/tmp/serveo.log 2>&1 &
+          # Chiediamo esplicitamente a serveo di mappare la porta 15900 remota sulla nostra 5900 locale
+          # Il flag -N risolve il problema dello pseudo-terminale
+          nohup ssh -o StrictHostKeyChecking=no -N -R 15900:localhost:5900 serveo.net </dev/null >/tmp/serveo.log 2>&1 &
           sleep 10
 
-      # ─── 3. Estrai i dati di connessione dai log ──────────────────────────
+      # ─── 3. Controlla e Mostra i dati di connessione ─────────────────────
       - name: Get Connection Link
         run: |
           cat /tmp/serveo.log
-          # Estraiamo la porta assegnata da Serveo
-          PORT=$(grep -oE "forwarded port [0-9]+" /tmp/serveo.log | grep -oE "[0-9]+")
-          
           echo "╔══════════════════════════════════════════════════════════════╗"
           echo "║       🍏 IL TUO VERO MAC OS IN CLOUD È PRONTO!               ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  Usa una qualsiasi app di VNC (es. RealVNC Viewer)           ║"
+          echo "║  Apri l'app VNC Viewer sul tuo iPhone e inserisci:           ║"
           echo "║                                                              ║"
-          echo "║  👉 INDIRIZZO:  serveo.net:$PORT                             ║"
+          echo "║  👉 INDIRIZZO:  serveo.net:15900                             ║"
           echo "║  👉 PASSWORD:   Simona26                                     ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
