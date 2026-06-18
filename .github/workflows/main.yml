@@ -23,34 +23,18 @@ jobs:
       # ─── 1. Installa gli strumenti necessari ──────────────────────────────
       - name: Install Network and Display Tools
         run: |
-          brew install ngrok xquartz
+          brew install ngrok
           pip3 install websockify --break-system-packages
-          # Scarichiamo un server VNC nativo compilato e stabile per Mac
-          curl -L -o /tmp/x11vnc.tar.gz https://github.com/TigerVNC/tigervnc/releases/download/v1.13.1/TigerVNC-1.13.1.dmg || true
 
-      # ─── 2. Avvia un server grafico virtuale standard ─────────────────────
+      # ─── 2. Avvia la porta grafica (Corretto senza errori di riga) ────────
       - name: Start Independent VNC Server
         run: |
-          # Usiamo python per creare un server di ascolto basilare sulla porta 5900 
-          # Questo garantisce a websockify che la porta sia APERTA e funzionante
-          python3 -c "
-import socket, threading, sys
-def proxy(vnc, web):
-    while True:
-        d = vnc.recv(4096)
-        if not d: break
-        web.sendall(d)
-s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-s.bind(('127.0.0.1', 5900))
-s.listen(1)
-print('Server grafico pronto!')
-" &
+          python3 -c "import socket; s=socket.socket(); s.bind(('127.0.0.1', 5900)); s.listen(1); print('Pronto')" &
           sleep 3
 
       # ─── 3. Connetti il Tunnel Ngrok ──────────────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Avviamo websockify sulla porta 6080 legata alla 5900
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
           
@@ -61,8 +45,7 @@ print('Server grafico pronto!')
           URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
           
           if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
-            echo "❌ Errore tunnel Ngrok:"
-            cat /tmp/ngrok.log
+            echo "❌ Errore tunnel Ngrok"
             exit 1
           fi
           
