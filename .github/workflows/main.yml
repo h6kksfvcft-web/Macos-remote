@@ -1,4 +1,4 @@
-name: Mac OS con Tmate Libero
+name: Mac OS con Bore (Vero VNC)
 
 on:
   workflow_dispatch:
@@ -14,38 +14,37 @@ jobs:
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ VNC Apple pronto!"
+          echo "✅ VNC Apple pronto sulla porta 5900!"
 
-      # ─── 2. Installa e lancia tmate (Zero registrazioni, Zero carte) ──────
-      - name: Setup tmate Session
+      # ─── 2. Scarica e avvia il tunnel Bore (Nessun account, 2 secondi) ───
+      - name: Start Bore Tunnel
         run: |
-          brew install tmate
-          # Avvia tmate in background
-          tmate -S /tmp/tmate.sock new-session -d
-          # Usa il comando corretto per attendere la connessione al server
-          tmate -S /tmp/tmate.sock wait tmate-ready
+          # Scarichiamo il programmino leggero di Bore per Mac
+          curl -LO https://github.com/ekmett/bore/releases/download/v0.5.1/bore-v0.5.1-x86_64-apple-darwin.tar.gz
+          tar -xzf bore-v0.5.1-x86_64-apple-darwin.tar.gz
           
-          # Recupera la stringa di connessione SSH
-          TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
-          
-          # Estraiamo l'host e la porta per il VNC dell'iPhone
-          SERVER_INFO=$(echo "$TMATE_SSH" | sed 's/ssh -p //')
-          PORT=$(echo "$SERVER_INFO" | awk '{print $1}')
-          HOST_USER=$(echo "$SERVER_INFO" | awk '{print $2}')
-          HOST=$(echo "$HOST_USER" | cut -d'@' -f2)
+          # Avviamo il tunnel sulla porta del VNC (5900) verso il server pubblico gratuito di bore
+          nohup ./bore local 5900 --to bore.pub </dev/null >/tmp/bore.log 2>&1 &
+          sleep 5
 
+      # ─── 3. Leggi il log e mostra l'indirizzo esatto ─────────────────────
+      - name: Get Connection Link
+        run: |
+          cat /tmp/bore.log
+          # Estraiamo l'indirizzo esatto assegnato da Bore (es. bore.pub:12345)
+          BORE_URL=$(grep -oE "bore.pub:[0-9]+" /tmp/bore.log | head -n 1)
+          
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 MAC OS IN CLOUD - METODO INDISTRUTTIBILE            ║"
+          echo "║       🍏 IL TUO MAC IN CLOUD È PRONTO (STAVOLTA DAVVERO!)     ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  1. Apri l'app VNC Viewer sul tuo iPhone                     ║"
-          echo "║  2. Inserisci questo indirizzo esatto:                       ║"
+          echo "║  Apri l'app RealVNC Viewer sul tuo iPhone e inserisci:       ║"
           echo "║                                                              ║"
-          echo "║  👉 INDIRIZZO:  $HOST:$PORT                                  ║"
+          echo "║  👉 INDIRIZZO:  $BORE_URL                                    ║"
           echo "║  👉 PASSWORD:   Simona26                                     ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 3. Mantieni vivo il Mac ─────────────────────────────────────────
+      # ─── 4. Mantieni vivo il Mac ─────────────────────────────────────────
       - name: Keep Alive
         run: sleep 3600
