@@ -1,99 +1,97 @@
-name: Real macOS Cloud (Instant Docker)
+name: Pure Native macOS Cloud
 
 on:
   workflow_dispatch:
     inputs:
       session_duration:
-        description: "Durata sessione in minuti (max 360)"
+        description: "Durata in minuti (Attenzione: consuma minuti x10)"
         required: false
-        default: "60"
+        default: "30"
         type: string
       vnc_password:
-        description: "Password VNC (lascia vuoto per auto-generata)"
+        description: "Password d'accesso"
         required: false
-        default: ""
+        default: "SimoneLia2026"
         type: string
 
 jobs:
-  macos-desktop:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
+  native-apple:
+    # 🍏 Diciamo a GitHub di darci un VERO computer Apple fisico
+    runs-on: macos-13
+    timeout-minutes: 60
 
     steps:
-      # ─── 1. Pulisci l'ambiente per avere massima RAM ────────────────────────
-      - name: Maximize Build Space and RAM
+      # ─── 1. Configura l'utente e la password sul Mac di GitHub ──────────────
+      - name: Configure macOS User Password
         run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
-          sudo docker system prune -a -f
+          # Impostiamo la password per l'utente corrente del Mac (runner)
+          echo "${{ github.event.inputs.vnc_password }}" | sudo passwd -u $USER
+          echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
-      # ─── 2. Avvia il vero macOS tramite container Docker ottimizzato ─────────
-      - name: Run macOS Container
+      # ─── 2. Attiva la Condivisione Schermo Nativa di Apple (Screen Sharing) ─
+      - name: Start Apple Screen Sharing Server
         run: |
-          if [ -n "${{ github.event.inputs.vnc_password }}" ]; then
-            VNC_PASS="${{ github.event.inputs.vnc_password }}"
-          else
-            VNC_PASS="$(openssl rand -hex 4)"
-          fi
-          echo "VNC_PASS=$VNC_PASS" >> "$GITHUB_ENV"
+          # Forza l'attivazione del server grafico integrato di macOS
+          sudo launchctl activate system/com.apple.screensharing
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvncpasswd -vncpasswd ${{ github.event.inputs.vnc_password }} \
+            -restart -agent -privs -all
+          echo "✅ Server grafici Apple sbloccati!"
 
-          # Avviamo l'immagine Docker del vero macOS (Catalina), configurando
-          # la RAM, i core e abilitando l'interfaccia noVNC interna sulla porta 8006
-          sudo docker run -d --name macos \
-            --device /dev/kvm \
-            -p 6080:8006 \
-            -e RAM="6G" \
-            -e CORES="4" \
-            -e VERSION="10.15" \
-            -e VNC_PASSWORD="$VNC_PASS" \
-            --vga qxl \
-            dockurr/macos
-
-          echo "Attendo l'inizializzazione del container..."
-          sleep 15
-
-      # ─── 3. Avvia il Tunnel Cloudflare sulla porta corretta ──────────────────
-      - name: Start Cloudflare Tunnel
+      # ─── 3. Installa Node, Websockify e Ngrok tramite Homebrew (il gestore Mac) ───
+      - name: Install Network Tools on macOS
         run: |
-          curl -L --output /tmp/cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
-          chmod +x /tmp/cloudflared
+          brew install ngrok python
+          # Installiamo websockify tramite python del Mac per convertire il segnale per il browser
+          pip3 install websockify
+
+      # ─── 4. Avvia websockify e il Tunnel Ngrok Autenticato ──────────────────
+      - name: Connect Ngrok Tunnel
+        run: |
+          # Convertiamo la porta 5900 del Mac (VNC nativo Apple) sulla porta web 6080
+          nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
+          sleep 3
           
-          nohup /tmp/cloudflared tunnel --url http://127.0.0.1:6080 </dev/null >/tmp/cloudflare.log 2>&1 &
+          # ⚠️ INSERISCI IL TUO TOKEN NGROK AL POSTO DI: IL_TUO_TOKEN_QUI
+          ngrok config add-authtoken "cr_3FIY7tk5cyBNpguY03YAleOod2W"
           
-          echo "Attendo URL pubblico da Cloudflare..."
-          for i in $(seq 1 30); do
-            sleep 3
-            URL=$(grep -oE 'https://[a-zA-Z0-9.-]+\.trycloudflare\.com' /tmp/cloudflare.log | head -1)
-            if [ -n "$URL" ]; then
-              echo "TUNNEL_URL=$URL" >> "$GITHUB_ENV"
-              echo "✅ Tunnel Cloudflare collegato a macOS!"
-              break
-            fi
-          done
-          if [ -z "$URL" ]; then
-            cat /tmp/cloudflare.log
-            exit 1
-          fi
+          # Lanciamo il tunnel sulla porta web
+          nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
+          sleep 5
+          
+          # Recuperiamo l'URL pubblico generato da Ngrok
+          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null)
+          CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
+          echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
+          echo "✅ Tunnel Ngrok agganciato al Mac!"
 
-      # ─── 4. Mostra il link per connetterti ──────────────────────────────────
-      - name: Display connection info
+      # ─── 5. Scarica la pagina web di noVNC per farti vedere lo schermo ───────
+      - name: Setup Web Interface View
         run: |
-          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          END_TIME=$(python3 -c "import datetime; print((datetime.datetime.utcnow() + datetime.timedelta(minutes=$SESSION_DURATION)).strftime('%H:%M UTC'))")
+          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
+          cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
+          # Spostiamo websockify a servire la cartella noVNC appena scaricata
+          pkill -f websockify || true
+          nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
+          sleep 2
 
+      # ─── 6. Sputa fuori il link finale per il tuo telefono ─────────────────
+      - name: Display Connection Link
+        run: |
           echo ""
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO VERO MAC OS CLOUD È PRONTO!                  ║"
+          echo "║       🍏 IL TUO VERO MAC OS NATIVO È IN LINEA!               ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  👉 ${TUNNEL_URL}/?vncpassword=${VNC_PASS}"
+          echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
           echo "║                                                              ║"
-          printf "║  🔑 Password VNC :  %-41s║\n" "$VNC_PASS"
-          printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
+          echo "║  🔑 Password VNC :  ${VNC_PASS}                              "
           echo "╚══════════════════════════════════════════════════════════════╝"
           echo ""
 
-      # ─── 5. Mantieni viva la sessione ───────────────────────────────────────
-      - name: Keep session alive
+      # ─── 7. Tieni sveglio il Mac ────────────────────────────────────────────
+      - name: Keep macOS alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
