@@ -39,15 +39,23 @@ jobs:
           
           echo "✅ Server Apple pronto sulla porta 5900!"
 
-      # ─── 2. Apri il Tunnel TCP Gratuito tramite Serveo ────────────────────
+      # ─── 2. Apri il Tunnel TCP Libero tramite Pinggy ──────────────────────
       - name: Start Free TCP Tunnel
         run: |
-          # Avviamo un tunnel TCP sulla porta 5900 usando SSH (senza installare nulla)
-          ssh -o StrictHostKeyChecking=no -R 5900:localhost:5900 serveo.net > /tmp/serveo.log 2>&1 &
-          sleep 10
+          # Avviamo il tunnel TCP sulla porta 5900 accettando automaticamente i parametri di cifratura
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R 0:localhost:5900 tcp@pinggy.io "v=1" > /tmp/pinggy.log 2>&1 &
+          sleep 12
           
-          # Estraiamo l'indirizzo assegnato
-          SERVER_ADDR=$(grep -oE "forwarded to .+" /tmp/serveo.log | sed 's/forwarded to //')
+          # Estraiamo l'URL TCP generato dal file di log
+          cat /tmp/pinggy.log
+          SERVER_ADDR=$(grep -oE "tcp://[^ ]+" /tmp/pinggy.log | head -n 1 | sed 's/tcp:\/\///')
+          
+          if [ -z "$SERVER_ADDR" ]; then
+            echo "❌ Errore nella creazione del tunnel. Ecco il log completo:"
+            cat /tmp/pinggy.log
+            exit 1
+          fi
+          
           echo "TCP_URL=$SERVER_ADDR" >> "$GITHUB_ENV"
 
       # ─── 3. Mostra i dati per l'applicazione mobile ───────────────────────
