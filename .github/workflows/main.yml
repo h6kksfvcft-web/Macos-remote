@@ -1,4 +1,4 @@
-name: Mac OS Istantaneo con Ngrok
+name: Mac OS con Tmate Libero
 
 on:
   workflow_dispatch:
@@ -9,46 +9,44 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Attiva lo Screen Sharing nativo di Apple ─────────────────────
+      # ─── 1. Attiva lo Screen Sharing nativo di Apple (1 secondo) ─────────
       - name: Enable Apple Remote Desktop
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ VNC Apple pronto sulla porta 5900!"
+          echo "✅ VNC Apple pronto!"
 
-      # ─── 2. Installa Ngrok velocemente ───────────────────────────────────
-      - name: Install Ngrok
-        run: brew install ngrok
-
-      # ─── 3. Avvia il tunnel TCP ultra-veloce con il tuo Token ────────────
-      - name: Start Ngrok TCP Tunnel
+      # ─── 2. Installa e lancia tmate (Zero registrazioni, Zero carte) ──────
+      - name: Setup tmate Session
         run: |
-          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
-          # Apriamo un tunnel TCP diretto sulla porta 5900 (il VNC del Mac)
-          nohup ngrok tcp 5900 </dev/null >/tmp/ngrok.log 2>&1 &
-          sleep 5
+          brew install tmate
+          # Avvia tmate in background creando una sessione pulita
+          tmate -S /tmp/tmate.sock new-session -d
+          tmate -S /tmp/tmate.sock wait-options
+          
+          # Recupera la stringa di connessione SSH/TCP
+          TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
+          
+          # Estraiamo l'host e la porta (tmate ci dà qualcosa tipo: ssh -p 22222 uncodice@lon1.tmate.io)
+          # Lo trasformiamo nel formato pulito che serve a noi
+          SERVER_INFO=$(echo "$TMATE_SSH" | sed 's/ssh -p //')
+          PORT=$(echo "$SERVER_INFO" | awk '{print $1}')
+          HOST_USER=$(echo "$SERVER_INFO" | awk '{print $2}')
+          HOST=$(echo "$HOST_USER" | cut -d'@' -f2)
+          USER=$(echo "$HOST_USER" | cut -d'@' -f1)
 
-      # ─── 4. Mostra i dati per l'app VNC Viewer ───────────────────────────
-      - name: Get Connection Link
-        run: |
-          cat /tmp/ngrok.log
-          # Estraiamo l'indirizzo TCP di Ngrok (es. tcp://0.tcp.ngrok.io:12345)
-          RAW_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
-          
-          # Puliamo l'URL togliendo "tcp://" perché l'app vuole solo l'indirizzo pulito
-          CLEAN_URL=$(echo "$RAW_URL" | sed 's/tcp:\/\///g')
-          
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO MAC REMOTO È ONLINE E VELOCISSIMO!           ║"
+          echo "║       🍏 MAC OS IN CLOUD - METODO INDISTRUTTIBILE            ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  Apri l'app VNC Viewer sul tuo iPhone e inserisci:           ║"
+          echo "║  1. Apri l'app VNC Viewer sul tuo iPhone                     ║"
+          echo "║  2. Inserisci questo indirizzo esatto:                       ║"
           echo "║                                                              ║"
-          echo "║  👉 INDIRIZZO:  $CLEAN_URL                                   ║"
+          echo "║  👉 INDIRIZZO:  $HOST:$PORT                                  ║"
           echo "║  👉 PASSWORD:   Simona26                                     ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 5. Mantieni vivo il Mac ─────────────────────────────────────────
+      # ─── 3. Mantieni vivo il Mac ─────────────────────────────────────────
       - name: Keep Alive
         run: sleep 3600
