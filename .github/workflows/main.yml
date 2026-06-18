@@ -20,35 +20,33 @@ jobs:
     timeout-minutes: 65
 
     steps:
-      # ─── 1. Scarica ed estrai Ngrok per Windows ──────────────────────────
-      - name: Download Ngrok
+      # ─── 1. Scarica, estrai e configura Ngrok ───────────────────────────
+      - name: Download and Configure Ngrok
         run: |
           Invoke-WebRequest https://bin.equinox.io/c/bNy7g2WDWkM/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
           Expand-Archive ngrok.zip -DestinationPath C:\ngrok
-              
-      # ─── 2. Configura l'Authtoken di Ngrok ──────────────────────────────
           C:\ngrok\ngrok.exe config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
 
-      # ─── 3. Attiva il Desktop Remoto (RDP) ufficiale di Windows ──────────
+      # ─── 2. Attiva il Desktop Remoto (RDP) ufficiale di Windows ──────────
       - name: Enable Remote Desktop (RDP)
         run: |
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
 
-      # ─── 4. Imposta la Password dell'Amministratore ─────────────────────
+      # ─── 3. Imposta la Password dell'Amministratore ─────────────────────
       - name: Configure Admin Password
         run: |
           $Password = ConvertTo-SecureString "${{ github.event.inputs.rdp_password }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
 
-      # ─── 5. Avvia il Tunnel Ngrok in modalità TCP ───────────────────────
+      # ─── 4. Avvia il Tunnel Ngrok in modalità TCP ───────────────────────
       - name: Start Ngrok TCP Tunnel
         run: |
           Start-Process C:\ngrok\ngrok.exe -ArgumentList "tcp 3389" -WindowStyle Hidden
           Start-Sleep -Seconds 10
 
-      # ─── 6. Estrai i dati di connessione per l'App ───────────────────────
+      # ─── 5. Estrai i dati di connessione per l'App ───────────────────────
       - name: Display Connection Details
         run: |
           $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
@@ -67,7 +65,7 @@ jobs:
           Write-Host ""
           Write-Host "=========================================================="
 
-      # ─── 7. Mantieni attiva la sessione per il tempo richiesto ───────────
+      # ─── 6. Mantieni attiva la sessione per il tempo richiesto ───────────
       - name: Keep Windows Alive
         run: |
           $DurationMin = [int]"${{ github.event.inputs.session_duration }}"
