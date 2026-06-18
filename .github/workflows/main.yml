@@ -27,19 +27,19 @@ jobs:
           nohup websockify --web=$HOME/noVNC 6080 localhost:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
 
-      # ─── 3. Avvia il Tunnel indistruttibile con Localhost.run ────────────
-      - name: Start Localhost.run Tunnel
+      # ─── 3. Avvia il Tunnel Libero con Pinggy (Niente chiavi o carte) ─────
+      - name: Start Pinggy Tunnel
         run: |
-          # Questo tunnel assegna un dominio HTTP automatico sulla porta web 6080
-          nohup ssh -o StrictHostKeyChecking=no -R 80:localhost:6080 localhost.run </dev/null >/tmp/tunnel.log 2>&1 &
+          # Pinggy crea un tunnel HTTP perfetto sulla porta 6080 usando solo SSH standard senza autenticazione obbligatoria
+          nohup ssh -o StrictHostKeyChecking=no -p 443 -R 0:localhost:6080 qr@a.pinggy.io </dev/null >/tmp/tunnel.log 2>&1 &
           sleep 10
 
       # ─── 4. Estrai il link finale e stampalo ─────────────────────────────
       - name: Get Connection Link
         run: |
           cat /tmp/tunnel.log
-          # Estraiamo l'indirizzo web unico assegnato
-          WEB_URL=$(grep -oE "https://[a-zA-Z0-9.-]+\.localhost\.run" /tmp/tunnel.log | head -n 1)
+          # Estraiamo l'URL pubblico https generato da Pinggy
+          WEB_URL=$(grep -oE "https://[a-zA-Z0-9.-]+\.a\.pinggy\.io" /tmp/tunnel.log | head -n 1)
           
           echo "╔══════════════════════════════════════════════════════════════╗"
           echo "║       🍏 IL TUO VERO MAC OS VIA WEB È PRONTO!                ║"
