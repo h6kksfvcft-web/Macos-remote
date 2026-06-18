@@ -33,21 +33,18 @@ jobs:
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 3. Avvia websockify e il Tunnel Ngrok col nuovo Token ─────────────
+      # ─── 3. Avvia websockify e il Tunnel Ngrok ────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Avviamo websockify sulla porta 6080
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
           
-          # Inseriamo il tuo nuovo codice token appena generato
-          ngrok config add-authtoken "cr_3FIbuhVDkK6kYmIzEGehH3flG2o"
+          # Inserito il tuo nuovo token valido
+          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
           
-          # Lanciamo il tunnel http
           nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
           sleep 12
           
-          # Recuperiamo l'URL pubblico generato da Ngrok
           URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
           
           if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
