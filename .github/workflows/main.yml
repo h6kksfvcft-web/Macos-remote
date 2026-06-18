@@ -20,23 +20,7 @@ jobs:
     timeout-minutes: 65
 
     steps:
-      # ─── 1. Installa Ngrok tramite Chocolatey ────────────────────────────
-      - name: Install Ngrok
-        run: |
-          choco install ngrok -y
-
-      # ─── 2. Configura l'Authtoken e avvia il Tunnel RDP (Porta 3389) ──────
-      - name: Connect Ngrok Tunnel
-        run: |
-          # Aggiungiamo il tuo token di autenticazione
-          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
-          
-          # Avviamo il tunnel TCP sulla porta del desktop remoto (3389) in background correttamente
-          Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389" -NoNewWindow -RedirectStandardOutput "C:\ngrok.log" -RedirectStandardError "C:\ngrok_err.log"
-          
-          echo "⏳ Ngrok avviato in background, in attesa del tunnel..."
-
-      # ─── 3. Attiva il Desktop Remoto in Windows e imposta la Password ────
+      # ─── 1. Attiva il Desktop Remoto in Windows e imposta la Password ────
       - name: Enable Windows Remote Desktop
         run: |
           # Abilitiamo le chiavi di registro per consentire le connessioni RDP
@@ -50,48 +34,48 @@ jobs:
           
           echo "✅ Windows Remote Desktop abilitato e password impostata!"
 
-      # ─── 4. Attesa Intelligente ed Estrazione dell'IP di Ngrok ────────────
+      # ─── 2. Avvia il Tunnel TCP Libero tramite Pinggy ─────────────────────
+      - name: Start Free TCP Tunnel
+        run: |
+          # Avviamo il tunnel TCP sulla porta 3389 usando il client SSH nativo di Windows.
+          # Accettiamo automaticamente le chiavi e salviamo l'output in un file di log.
+          Start-Process ssh -ArgumentList "-o StrictHostKeyChecking=no -o UserKnownHostsFile=\\`$null -R 0:localhost:3389 tcp@pinggy.io v=1" -NoNewWindow -RedirectStandardOutput "C:\pinggy.log" -RedirectStandardError "C:\pinggy_err.log"
+          
+          echo "⏳ Tunnel TCP in fase di attivazione..."
+          Start-Sleep -Seconds 12
+
+      # ─── 3. Estrai l'indirizzo pubblico dai Log di Pinggy ─────────────────
       - name: Display Connection Details
         run: |
-          $Attempts = 0
-          $MaxAttempts = 6
-          $NgrokApi = $null
-
-          # Ciclo di controllo: prova a connettersi alle API di Ngrok per un massimo di 30 secondi
-          while ($null -eq $NgrokApi -and $Attempts -lt $MaxAttempts) {
-              try {
-                  Start-Sleep -Seconds 5
-                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-              } catch {
-                  $Attempts++
-                  Write-Host "⏳ Ngrok non è ancora pronto, riprovo... ($Attempts/$MaxAttempts)"
+          if (Test-Path "C:\pinggy.log") {
+              $LogContent = Get-Content "C:\pinggy.log" -Raw
+              # Cerchiamo la stringa tcp:// generata da Pinggy
+              if ($LogContent -match "tcp://([^ \r\n]+)") {
+                  $CleanAddress = $Matches[1]
+                  
+                  Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+                  Write-Host "║       🪟 IL TUO AMBIENTE DI TEST WINDOWS È IN LINEA!          ║" -ForegroundColor Green
+                  Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Green
+                  Write-Host "║                                                              ║" -ForegroundColor Green
+                  Write-Host "║  Usa l'app ufficiale 'Remote Desktop' (di Microsoft)         ║" -ForegroundColor Green
+                  Write-Host "║                                                              ║" -ForegroundColor Green
+                  Write-Host "║  👉 INDIRIZZO PC (IP:Porta): $CleanAddress" -ForegroundColor Yellow
+                  Write-Host "║  👉 NOME UTENTE:             runneradmin" -ForegroundColor Yellow
+                  Write-Host "║  👉 PASSWORD:                ${{ github.event.inputs.rdp_password }}" -ForegroundColor Yellow
+                  Write-Host "║                                                              ║" -ForegroundColor Green
+                  Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+              } else {
+                  Write-Host "❌ Impossibile trovare l'URL nel log di Pinggy. Contenuto:"
+                  Get-Content "C:\pinggy.log"
+                  Exit 1
               }
-          }
-
-          if ($null -eq $NgrokApi) {
-              Write-Host "❌ Errore: Ngrok non si è avviato in tempo. Ecco i log:"
-              if (Test-Path "C:\ngrok.log") { Get-Content "C:\ngrok.log" }
-              if (Test-Path "C:\ngrok_err.log") { Get-Content "C:\ngrok_err.log" }
+          } else {
+              Write-Host "❌ Il file di log di Pinggy non è stato creato. Errore:"
+              if (Test-Path "C:\pinggy_err.log") { Get-Content "C:\pinggy_err.log" }
               Exit 1
           }
 
-          # Estraiamo l'URL pubblico pulito
-          $PublicUrl = $NgrokApi.tunnels.public_url
-          $CleanAddress = $PublicUrl -replace "tcp://", ""
-          
-          Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║       🪟 IL TUO AMBIENTE DI TEST WINDOWS È IN LINEA!          ║" -ForegroundColor Green
-          Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Green
-          Write-Host "║                                                              ║" -ForegroundColor Green
-          Write-Host "║  Usa l'app ufficiale 'Remote Desktop' (di Microsoft)         ║" -ForegroundColor Green
-          Write-Host "║                                                              ║" -ForegroundColor Green
-          Write-Host "║  👉 INDIRIZZO PC (IP:Porta): $CleanAddress" -ForegroundColor Yellow
-          Write-Host "║  👉 NOME UTENTE:             runneradmin" -ForegroundColor Yellow
-          Write-Host "║  👉 PASSWORD:                ${{ github.event.inputs.rdp_password }}" -ForegroundColor Yellow
-          Write-Host "║                                                              ║" -ForegroundColor Green
-          Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
-
-      # ─── 5. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 4. Mantieni attiva la sessione ───────────────────────────────────
       - name: Keep Windows Alive
         run: |
           $Minutes = [int]"${{ github.event.inputs.session_duration }}"
