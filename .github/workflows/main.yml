@@ -1,7 +1,7 @@
-name: GUI macOS 26 Senza Secret
+name: GUI macOS 26 Nativa Senza Errori
 
 on: 
-  workflow_dispatch:
+  workflow_dispatch: # Avvio manuale con un clic
 
 jobs:
   interfaccia-grafica:
@@ -11,6 +11,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4
 
+      # 1. Configura lo schermo e crea la password dinamica
       - name: Configura Schermo con Password Casuale
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -18,13 +19,31 @@ jobs:
           echo "LA TUA PASSWORD DI ACCESSO È: $DYNAMIC_PASS"
           echo "=================================================="
           
+          # Cambia la password dell'utente "runner" del Mac
           echo -e "$DYNAMIC_PASS\n$DYNAMIC_PASS" | sudo passwd runner
           
+          # Attiva la condivisione dello schermo ufficiale Apple
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
             -grantprivs -all \
             -restart -agent
 
-      # Alternativa ultra-rapida a tmate che non usa Homebrew
+      # 2. Avvia il tunnel remoto nativo senza usare "actions" esterne buggate
       - name: Avvia il Tunnel per la GUI
-        uses: csexton/debugger-action@v3
+        run: |
+          echo "Avvio del tunnel di comunicazione sicuro..."
+          # Scarica il binario ufficiale standalone ed esegue il tunnel al volo
+          curl -sL https://github.com | tar JKv -C /tmp/
+          
+          # Genera la chiave di sessione e mostra i link direttamente nei log
+          ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
+          /tmp/tmate-2.4.0-static-linux-amd64/tmate -S /tmp/tmate.sock new-session -d
+          /tmp/tmate-2.4.0-static-linux-amd64/tmate -S /tmp/tmate.sock wait tmate-ready
+          
+          echo "=================================================="
+          echo "LINK PER CONNETTERTI AL MAC VIRTUALE:"
+          /tmp/tmate-2.4.0-static-linux-amd64/tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
+          echo "=================================================="
+          
+          # Mantiene il Mac attivo per permetterti di usarlo
+          while [ -f /tmp/tmate.sock ]; do sleep 5; done
