@@ -1,4 +1,4 @@
-Name: Pure Native macOS Cloud
+name: Pure Native macOS Cloud
 
 on:
   workflow_dispatch:
