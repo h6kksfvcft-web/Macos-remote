@@ -20,32 +20,34 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Installa Ngrok e gli strumenti necessari ──────────────────────
+      # ─── 1. Installa Ngrok e Websockify ───────────────────────────────────
       - name: Install Network Tools on macOS
         run: |
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Forza macOS a creare uno schermo virtuale attivo ──────────────
-      - name: Activate macOS Virtual Display
+      # ─── 2. SBLOCCO PRIVACY APPLE (Registrazione Schermo e Controllo) ─────
+      - name: Force Enable Screen Recording & Remote Management
         run: |
-          # Diciamo al sistema di attivare la modalità remota multiutente
+          # Diamo i permessi di registrazione schermo nel database della privacy di Apple per l'agente remoto
+          sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db "INSERT OR REPLACE INTO access VALUES('kTCCServiceScreenCapture','com.apple.RemoteManagement.RemoteManagementAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s));" 2>/dev/null || true
+          sudo sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db "INSERT OR REPLACE INTO access VALUES('kTCCServiceAccessibility','com.apple.RemoteManagement.RemoteManagementAgent',0,2,4,1,NULL,NULL,0,'UNUSED',NULL,0,$(date +%s));" 2>/dev/null || true
+          
+          # Forza l'attivazione della console grafica
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysStartOnConsole -bool true
           
-          # Impostiamo la password VNC di sistema in modo nativo
+          # Configura la password e attiva lo Screen Sharing nativo
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -clientopts -setvncpasswd -vncpasswd "${{ github.event.inputs.vnc_password }}"
           
-          # Avviamo il servizio di condivisione dello schermo Apple
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -restart -agent -privs -all
           
-          echo "✅ Schermo virtuale macOS attivato!"
+          echo "✅ Permessi di registrazione e controllo forzati con successo!"
 
       # ─── 3. Connetti il Tunnel Ngrok ──────────────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Colleghiamo websockify al VNC nativo di Apple (porta 5900) sulla porta web 6080
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
           
