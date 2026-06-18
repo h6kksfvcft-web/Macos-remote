@@ -20,60 +20,57 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Installa Ngrok e scarica un VNC Server portatile ──────────────
-      - name: Install Network Tools and Portable VNC
+      # ─── 1. Installa gli strumenti di rete e il server VNC moderno ────────
+      - name: Install Network Tools and VNC Server
         run: |
-          brew install ngrok
+          brew install ngrok x11vnc
           pip3 install websockify --break-system-packages
-          
-          # Scarichiamo un server VNC indipendente pronto all'uso che non richiede permessi di sistema Apple
-          curl -L -o /tmp/osxvnc.tgz https://github.com/stweil/OSXvnc/releases/download/v3.0/OSXvnc-3.0.tgz || true
-          tar -xzf /tmp/osxvnc.tgz -C /tmp/ 2>/dev/null || true
 
-      # ─── 2. Avvia lo Schermo Virtuale indipendente ────────────────────────
-      - name: Start Independent Desktop Server
+      # ─── 2. Configura la password e avvia il Server VNC ───────────────────
+      - name: Start VNC Server
         run: |
-          # Avviamo il server indipendente direttamente nella sessione del Mac sulla porta 5900
-          # Usiamo la tua password senza toccare i database bloccati di Apple
-          if [ -f "/tmp/OSXvnc/OSXvnc-server" ]; then
-            nohup /tmp/OSXvnc/OSXvnc-server -rfbauth "${{ github.event.inputs.vnc_password }}" -rfbport 5900 </dev/null >/tmp/vnc.log 2>&1 &
-          else
-            # Soluzione di riserva se il binario differisce: usiamo un server grafico di background integrato
-            sudo Xvfb :1 -screen 0 1280x720x24 &
-            sleep 2
-          fi
-          echo "✅ Server grafico parallelo avviato!"
+          # Creiamo la directory per la password di VNC
+          mkdir -p ~/.vnc
+          x11vnc -storepasswd "${{ github.event.inputs.vnc_password }}" ~/.vnc/passwd
+          
+          # Avviamo x11vnc collegandolo allo schermo nativo di macOS (display :0)
+          nohup x11vnc -rfbauth ~/.vnc/passwd -rfbport 5900 -shared -forever -bg -localhost </dev/null >/tmp/vnc.log 2>&1 &
+          sleep 3
+          echo "✅ Server VNC collegato allo schermo nativo!"
 
-      # ─── 3. Connetti il Tunnel Ngrok ──────────────────────────────────────
-      - name: Connect Ngrok Tunnel
-        run: |
-          # Colleghiamo websockify al nostro server parallelo
-          nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
-          sleep 5
-          
-          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
-          nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
-          sleep 12
-          
-          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
-          
-          if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
-            echo "❌ Errore tunnel Ngrok"
-            exit 1
-          fi
-          
-          CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
-          echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
-          echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
-
-      # ─── 4. Configura l'interfaccia noVNC ─────────────────────────────────
+      # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
         run: |
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
-          pkill -f websockify || true
+          
+          # Avviamo websockify sulla porta 6080 puntando al VNC sulla porta 5900
           nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 2
+
+      # ─── 4. Connetti il Tunnel Ngrok ──────────────────────────────────────
+      - name: Connect Ngrok Tunnel
+        run: |
+          # Configura l'authtoken fornito
+          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
+          
+          # Avvia il tunnel sulla porta HTTP di noVNC
+          nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
+          sleep 10
+          
+          # Recupera l'URL pubblico generato
+          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
+          
+          if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
+            echo "❌ Errore durante l'apertura del tunnel Ngrok. Verifica il log:"
+            cat /tmp/ngrok.log
+            exit 1
+          fi
+          
+          # Forza l'uso di HTTPS per la sicurezza del browser
+          CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
+          echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
+          echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
       # ─── 5. Mostra il link di connessione finale ──────────────────────────
       - name: Display Connection Link
@@ -86,9 +83,10 @@ jobs:
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 6. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 6. Mantieni attiva la sessione (Corretto) ────────────────────────
       - name: Keep macOS alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
+          echo "⏳ Il sistema rimarrà attivo per $SESSION_DURATION minuti ($SLEEP_SECONDS secondi)..."
           sleep $SLEEP_SECONDS
