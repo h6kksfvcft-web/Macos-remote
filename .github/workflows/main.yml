@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 65
 
     steps:
-      # ─── 1. Installa Ngrok ufficialmente tramite Chocolatey ──────────────
+      # ─── 1. Installa Ngrok tramite Chocolatey ───────────────────────────
       - name: Install and Configure Ngrok
         run: |
           choco install ngrok --no-progress -y
@@ -39,26 +39,50 @@ jobs:
           $Password = ConvertTo-SecureString "${{ github.event.inputs.rdp_password }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
 
-      # ─── 4. Avvia il Tunnel Ngrok in modalità TCP ───────────────────────
-      - name: Start Ngrok TCP Tunnel
+      # ─── 4. Avvia il Tunnel Ngrok e controlla lo stato ───────────────────
+      - name: Start Ngrok Tunnel and Extract URL
         run: |
-          Start-Process ngrok -ArgumentList "tcp 3389" -WindowStyle Hidden
-          Start-Sleep -Seconds 10
+          # Avviamo ngrok reindirizzando l'output su un file log per evitare che si blocchi
+          cmd /c "start /B ngrok tcp 3389 > c:\ngrok_log.txt 2>&1"
+          
+          Write-Host "⏳ In attesa che il tunnel Ngrok si colleghi ai server..."
+          $MaxTentativi = 15
+          $TunnelPronto = $false
+          
+          for ($i = 1; $i -le $MaxTentativi; $i++) {
+              Start-Sleep -Seconds 3
+              try {
+                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+                  if ($NgrokApi.tunnels.Count -gt 0) {
+                      $PublicUrl = $NgrokApi.tunnels[0].public_url
+                      $CleanUrl = $PublicUrl -replace "tcp://", ""
+                      $TunnelPronto = $true
+                      break
+                  }
+              } catch {
+                  Write-Host "🔄 Tentativo $i/$MaxTentativi: Il server locale non risponde ancora..."
+              }
+          }
 
-      # ─── 5. Estrai i dati di connessione per l'App ───────────────────────
+          if (-not $TunnelPronto) {
+              Write-Host "❌ Impossibile avviare il tunnel Ngrok. Ecco il contenuto del file log:"
+              if (Test-Path c:\ngrok_log.txt) { Get-Content c:\ngrok_log.txt }
+              exit 1
+          }
+
+          # Salviamo l'URL nelle variabili d'ambiente di GitHub per usarlo nello step successivo
+          echo "RDP_URL=$CleanUrl" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
+
+      # ─── 5. Mostra i dati di connessione per l'App ───────────────────────
       - name: Display Connection Details
         run: |
-          $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
-          $PublicUrl = $NgrokApi.tunnels[0].public_url
-          $CleanUrl = $PublicUrl -replace "tcp://", ""
-          
           Write-Host "=========================================================="
           Write-Host "      🪟 IL TUO COMPUTER WINDOWS CLOUD È PRONTO!          "
           Write-Host "=========================================================="
           Write-Host ""
           Write-Host "Apri l'app 'Windows App' sul tuo iPhone/iPad e inserisci:"
           Write-Host ""
-          Write-Host "👉 NOME PC (Host): $CleanUrl"
+          Write-Host "👉 NOME PC (Host): ${{ env.RDP_URL }}"
           Write-Host "👉 NOME UTENTE:    runneradmin"
           Write-Host "👉 PASSWORD:       ${{ github.event.inputs.rdp_password }}"
           Write-Host ""
