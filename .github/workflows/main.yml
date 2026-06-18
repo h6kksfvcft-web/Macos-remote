@@ -9,7 +9,7 @@ on:
         default: "60"
         type: string
       rdp_password:
-        description: "Imposta la password d'accesso (Minimo 6 caratteri)"
+        description: "Imposta la password d'accesso"
         required: false
         default: "SimoneLia2026"
         type: string
@@ -23,25 +23,60 @@ jobs:
       # ─── 1. Attiva il Desktop Remoto in Windows e imposta la Password ────
       - name: Enable Windows Remote Desktop
         run: |
-          # Abilitiamo le chiavi di registro per consentire le connessioni RDP
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
           
-          # Cambiamo la password dell'utente 'runneradmin' con quella scelta da te
           $Password = ConvertTo-SecureString "${{ github.event.inputs.rdp_password }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
+          echo "✅ RDP Attivo!"
+
+      # ─── 2. Scarica ed esegui il Tunnel ultra-veloce ──────────────────────
+      - name: Start Ultra-Fast RDP Tunnel
+        run: |
+          # Scarichiamo un client di tunneling leggero (chassis rapido)
+          Invoke-WebRequest -Uri "https://github.com/fatedier/frp/releases/download/v0.54.0/frp_0.54.0_windows_amd64.zip" -OutFile "frp.zip"
+          Expand-Archive -Path "frp.zip" -DestinationPath "C:\frp"
           
-          echo "✅ Windows Remote Desktop abilitato e password impostata!"
+          # Generiamo una porta casuale tra 10000 e 50000 per la tua connessione
+          $RandomPort = Get-Random -Minimum 10000 -Maximum 50000
+          
+          # Configura il tunnel verso un server pubblico gratuito
+          $Config = @"
+          serverAddr = "v1.frp.one"
+          serverPort = 7000
 
-      # ─── 2. Avvia il Tunnel RDP tramite l'estensione ufficiale Tmate ─────
-      - name: Setup Tmate RDP Tunnel
-        uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 5
-        with:
-          limit-access-to-actor: false
+          [[proxies]]
+          name = "simone-rdp-$RandomPort"
+          type = "tcp"
+          localIp = "127.0.0.1"
+          localPort = 3389
+          remotePort = $RandomPort
+          "@
+          
+          Out-File -FilePath "C:\frp\frp_0.54.0_windows_amd64\frpc.toml" -InputObject $Config -Encoding utf8
+          
+          # Avvia il tunnel in background
+          Start-Process -FilePath "C:\frp\frp_0.54.0_windows_amd64\frpc.exe" -ArgumentList "-c C:\frp\frp_0.54.0_windows_amd64\frpc.toml" -NoNewWindow
+          
+          Start-Sleep -Seconds 5
+          echo "RDP_PORT=$RandomPort" >> $env:GITHUB_ENV
+          echo "✅ Tunnel stabilito istantaneamente!"
 
-      # ─── 3. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 3. Mostra i dati di connessione finali ───────────────────────────
+      - name: Display Connection Details
+        run: |
+          Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Green
+          Write-Host "║       🪟 IL TUO AMBIENTE DI TEST WINDOWS È IN LINEA!          ║" -ForegroundColor Green
+          Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Green
+          Write-Host "║                                                              ║" -ForegroundColor Green
+          Write-Host "║  👉 INDIRIZZO PC (IP:Porta): v1.frp.one:${{ env.RDP_PORT }}" -ForegroundColor Yellow
+          Write-Host "║  👉 NOME UTENTE:             runneradmin" -ForegroundColor Yellow
+          Write-Host "║  👉 PASSWORD:                ${{ github.event.inputs.rdp_password }}" -ForegroundColor Yellow
+          Write-Host "║                                                              ║" -ForegroundColor Green
+          Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+
+      # ─── 4. Mantieni attiva la sessione ───────────────────────────────────
       - name: Keep Windows Alive
         run: |
           $Minutes = [int]"${{ github.event.inputs.session_duration }}"
