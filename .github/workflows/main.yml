@@ -20,7 +20,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Forza la password usando sysadminctl ──────────────────────────
+      # ─── 1. Configura la password utente in modo sicuro ───────────────────
       - name: Configure macOS User Password
         run: |
           sudo sysadminctl -deletePassword /Users/$USER
@@ -33,22 +33,38 @@ jobs:
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 3. Avvia websockify e il Tunnel Ngrok ────────────────────────────
+      # ─── 3. Sblocca la sessione grafica Apple e avvia lo Screen Sharing ───
+      - name: Force Start Apple Screen Sharing
+        run: |
+          # Otteniamo l'ID dell'utente corrente (runner)
+          USER_ID=$(id -u $USER)
+          
+          # Forziamo l'attivazione del server grafico all'interno del contesto utente attivo
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          
+          # Configura e sblocca l'agente remoto di Apple per accettare connessioni VNC
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvncpasswd -vncpasswd "${{ github.event.inputs.vnc_password }}" \
+            -restart -agent -privs -all
+          
+          echo "✅ Server grafici Apple sbloccati nella sessione utente!"
+
+      # ─── 4. Connetti il Tunnel Ngrok ──────────────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
+          # Avviamo websockify creando il ponte tra il server web (6080) e il VNC locale (5900)
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 5
           
-          # Inserito il tuo nuovo token valido
           ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
-          
           nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
           sleep 12
           
           URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
           
           if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
-            echo "❌ Errore dettagliato di Ngrok dal file di log:"
+            echo "❌ Errore tunnel Ngrok:"
             cat /tmp/ngrok.log
             exit 1
           fi
@@ -56,7 +72,7 @@ jobs:
           CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
           echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
 
-      # ─── 4. Scarica l'interfaccia web noVNC ───────────────────────────────
+      # ─── 5. Configura l'interfaccia Web noVNC ─────────────────────────────
       - name: Setup Web Interface View
         run: |
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
@@ -65,13 +81,18 @@ jobs:
           nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 2
 
-      # ─── 5. Mostra il link di connessione ─────────────────────────────────
+      # ─── 6. Mostra il link di connessione finale ──────────────────────────
       - name: Display Connection Link
         run: |
-          echo "IL TUO MAC OS NATIVO È IN LINEA!"
-          echo "${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║       🍏 IL TUO VERO MAC OS NATIVO È IN LINEA!               ║"
+          echo "╠══════════════════════════════════════════════════════════════╣"
+          echo "║                                                              ║"
+          echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
+          echo "║                                                              ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 6. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 7. Mantieni attiva la sessione ───────────────────────────────────
       - name: Keep macOS alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
