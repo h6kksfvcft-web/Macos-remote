@@ -20,33 +20,21 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Installa TigerVNC, Ngrok e Websockify ─────────────────────────
-      - name: Install Network Tools and TigerVNC
+      # ─── 1. Installa solo Ngrok (Docker è già presente sul Mac di GitHub) ───
+      - name: Install Ngrok on macOS
         run: |
-          brew install tigervnc ngrok
-          pip3 install websockify --break-system-packages
+          brew install ngrok
 
-      # ─── 2. Configura e avvia il Server VNC con la tua Password ───────────
-      - name: Start TigerVNC Server
+      # ─── 2. Avvia una sessione Linux Desktop Desktop super stabile via Docker ───
+      - name: Start Virtual Desktop Environment
         run: |
-          # Creiamo la cartella per le impostazioni VNC se non esiste
-          mkdir -p ~/.vnc
-          
-          # Configura la password inserita nel modulo di avvio
-          echo "${{ github.event.inputs.vnc_password }}" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          
-          # Avviamo il server grafico sulla porta standard 5901 (:1)
-          vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
-          echo "✅ Server VNC alternativo avviato con successo!"
+          # Lanciamo un container grafico pronto all'uso con la tua password configurata
+          docker run -d -p 6080:80 -e VNC_PW="${{ github.event.inputs.vnc_password }}" --vnc :1 dorowu/ubuntu-desktop-lxde-vnc
+          sleep 10
 
-      # ─── 3. Connetti il Tunnel Ngrok sulla porta del nuovo VNC ────────────
+      # ─── 3. Connetti il Tunnel Ngrok ──────────────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Colleghiamo websockify alla porta 5901 (il nostro TigerVNC) esponendolo sulla 6080
-          nohup websockify 6080 127.0.0.1:5901 </dev/null >/tmp/websockify.log 2>&1 &
-          sleep 5
-          
           ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
           nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
           sleep 12
@@ -63,28 +51,19 @@ jobs:
           echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
           echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
-      # ─── 4. Configura l'interfaccia Web noVNC ─────────────────────────────
-      - name: Setup Web Interface View
-        run: |
-          git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
-          cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
-          pkill -f websockify || true
-          nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5901 </dev/null >/tmp/websockify.log 2>&1 &
-          sleep 2
-
-      # ─── 5. Mostra il link di connessione finale ──────────────────────────
+      # ─── 4. Mostra il link di connessione finale ──────────────────────────
       - name: Display Connection Link
         run: |
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO MAC OS È IN LINEA!                           ║"
+          echo "║       🍏 IL TUO DESKTOP VIRTUALE È IN LINEA!                 ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
           echo "║  👉 ${TUNNEL_URL}/index.html?autoconnect=true&password=${VNC_PASS}"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 6. Mantieni attiva la sessione ───────────────────────────────────
-      - name: Keep macOS alive
+      # ─── 5. Mantieni attiva la sessione ───────────────────────────────────
+      - name: Keep Environment alive
         run: |
           SESSION_DURATION="${{ github.event.inputs.session_duration }}"
           SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
