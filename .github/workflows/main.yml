@@ -45,7 +45,7 @@ jobs:
           # Avviamo ngrok reindirizzando l'output su un file log per evitare che si blocchi
           cmd /c "start /B ngrok tcp 3389 > c:\ngrok_log.txt 2>&1"
           
-          Write-Host "⏳ In attesa che il tunnel Ngrok si colleghi ai server..."
+          Write-Host "In attesa che il tunnel Ngrok si colleghi ai server..."
           $MaxTentativi = 15
           $TunnelPronto = $false
           
@@ -60,12 +60,12 @@ jobs:
                       break
                   }
               } catch {
-                  Write-Host "🔄 Tentativo $i/$MaxTentativi: Il server locale non risponde ancora..."
+                  Write-Host "Tentativo in corso... Il server locale non risponde ancora..."
               }
           }
 
           if (-not $TunnelPronto) {
-              Write-Host "❌ Impossibile avviare il tunnel Ngrok. Ecco il contenuto del file log:"
+              Write-Host "Impossibile avviare il tunnel Ngrok. Ecco il contenuto del file log:"
               if (Test-Path c:\ngrok_log.txt) { Get-Content c:\ngrok_log.txt }
               exit 1
           }
@@ -77,7 +77,7 @@ jobs:
       - name: Display Connection Details
         run: |
           Write-Host "=========================================================="
-          Write-Host "      🪟 IL TUO COMPUTER WINDOWS CLOUD È PRONTO!          "
+          Write-Host "      IL TUO COMPUTER WINDOWS CLOUD È PRONTO!          "
           Write-Host "=========================================================="
           Write-Host ""
           Write-Host "Apri l'app 'Windows App' sul tuo iPhone/iPad e inserisci:"
