@@ -9,15 +9,15 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Configura l'utente e attiva lo Screen Sharing con permessi totali ───
-      - name: Enable Apple Remote Desktop with User
+      # ─── 1. Forza la password VNC senza toccare gli utenti di sistema ─────
+      - name: Enable Apple Remote Desktop with VNC Password
         run: |
-          # Impostiamo la password per l'utente corrente 'runner'
-          sudo dscl . -passwd /Users/runner Simona26
+          # Attiviamo lo Screen Sharing nativo
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
           
-          # Attiviamo il servizio per l'utente runner
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all -users runner
-          echo "✅ VNC Apple configurato per l'utente runner!"
+          # Configura la password VNC universale scavalcando i blocchi di sistema
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
+          echo "✅ VNC Apple sbloccato con password universale!"
 
       # ─── 2. Installa Bore tramite Homebrew ──────────────────────────────────────
       - name: Install Bore via Brew
@@ -44,8 +44,7 @@ jobs:
           echo "║                                                              ║"
           echo "║  👉 INDIRIZZO:  $BORE_URL                                    ║"
           echo "║                                                              ║"
-          echo "║  Quando ti chiede le credenziali inserisci:                  ║"
-          echo "║  👉 USERNAME:   runner                                       ║"
+          echo "║  Quando ti connetti lascia il campo USERNAME VUOTO e metti:  ║"
           echo "║  👉 PASSWORD:   Simona26                                     ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
