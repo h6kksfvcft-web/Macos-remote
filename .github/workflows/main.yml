@@ -1,85 +1,50 @@
-name: Windows Remote Desktop Cloud
+name: Mac OS Nativo Libero
 
 on:
   workflow_dispatch:
-    inputs:
-      session_duration:
-        description: "Durata in minuti"
-        required: false
-        default: "60"
-        type: string
-      rdp_password:
-        description: "Imposta la password d'accesso"
-        required: false
-        default: "SimoneLia2026"
-        type: string
 
 jobs:
-  windows-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 65
+  macos-desktop:
+    runs-on: macos-latest
+    timeout-minutes: 60
 
     steps:
-      # ─── 1. Attiva il Desktop Remoto in Windows e imposta la Password ────
-      - name: Enable Windows Remote Desktop
+      # ─── 1. Attiva il VNC nativo di Apple ────────────────────────────────
+      - name: Enable Apple Remote Desktop
         run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+          # Attiviamo il servizio di condivisione schermo nativo di macOS
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
           
-          $Password = ConvertTo-SecureString "${{ github.event.inputs.rdp_password }}" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $Password
-          echo "✅ RDP Attivo!"
+          # Impostiamo la password "Simona26" per il VNC nativo
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
+          echo "✅ Screen Sharing Apple attivo sulla porta standard 5900!"
 
-      # ─── 2. Scarica ed esegui il Tunnel ultra-veloce ──────────────────────
-      - name: Start Ultra-Fast RDP Tunnel
+      # ─── 2. Apri il tunnel con Serveo (Gratis, No Carta, No Telefono) ────
+      - name: Start Free Serveo Tunnel
         run: |
-          # Scarichiamo un client di tunneling leggero (chassis rapido)
-          Invoke-WebRequest -Uri "https://github.com/fatedier/frp/releases/download/v0.54.0/frp_0.54.0_windows_amd64.zip" -OutFile "frp.zip"
-          Expand-Archive -Path "frp.zip" -DestinationPath "C:\frp"
-          
-          # Generiamo una porta casuale tra 10000 e 50000 per la tua connessione
-          $RandomPort = Get-Random -Minimum 10000 -Maximum 50000
-          
-          # Configura il tunnel verso un server pubblico gratuito
-          $Config = @"
-          serverAddr = "v1.frp.one"
-          serverPort = 7000
+          # Usiamo l'SSH nativo del Mac per creare un tunnel verso il server pubblico gratuito Serveo
+          # Questo assegnerà una porta tcp remota per collegarti
+          nohup ssh -o StrictHostKeyChecking=no -R 0:localhost:5900 serveo.net </dev/null >/tmp/serveo.log 2>&1 &
+          sleep 10
 
-          [[proxies]]
-          name = "simone-rdp-$RandomPort"
-          type = "tcp"
-          localIp = "127.0.0.1"
-          localPort = 3389
-          remotePort = $RandomPort
-          "@
-          
-          Out-File -FilePath "C:\frp\frp_0.54.0_windows_amd64\frpc.toml" -InputObject $Config -Encoding utf8
-          
-          # Avvia il tunnel in background
-          Start-Process -FilePath "C:\frp\frp_0.54.0_windows_amd64\frpc.exe" -ArgumentList "-c C:\frp\frp_0.54.0_windows_amd64\frpc.toml" -NoNewWindow
-          
-          Start-Sleep -Seconds 5
-          echo "RDP_PORT=$RandomPort" >> $env:GITHUB_ENV
-          echo "✅ Tunnel stabilito istantaneamente!"
-
-      # ─── 3. Mostra i dati di connessione finali ───────────────────────────
-      - name: Display Connection Details
+      # ─── 3. Estrai i dati di connessione dai log ──────────────────────────
+      - name: Get Connection Link
         run: |
-          Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-          Write-Host "║       🪟 IL TUO AMBIENTE DI TEST WINDOWS È IN LINEA!          ║" -ForegroundColor Green
-          Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Green
-          Write-Host "║                                                              ║" -ForegroundColor Green
-          Write-Host "║  👉 INDIRIZZO PC (IP:Porta): v1.frp.one:${{ env.RDP_PORT }}" -ForegroundColor Yellow
-          Write-Host "║  👉 NOME UTENTE:             runneradmin" -ForegroundColor Yellow
-          Write-Host "║  👉 PASSWORD:                ${{ github.event.inputs.rdp_password }}" -ForegroundColor Yellow
-          Write-Host "║                                                              ║" -ForegroundColor Green
-          Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
+          cat /tmp/serveo.log
+          # Estraiamo la porta assegnata da Serveo
+          PORT=$(grep -oE "forwarded port [0-9]+" /tmp/serveo.log | grep -oE "[0-9]+")
+          
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║       🍏 IL TUO VERO MAC OS IN CLOUD È PRONTO!               ║"
+          echo "╠══════════════════════════════════════════════════════════════╣"
+          echo "║                                                              ║"
+          echo "║  Usa una qualsiasi app di VNC (es. RealVNC Viewer)           ║"
+          echo "║                                                              ║"
+          echo "║  👉 INDIRIZZO:  serveo.net:$PORT                             ║"
+          echo "║  👉 PASSWORD:   Simona26                                     ║"
+          echo "║                                                              ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 4. Mantieni attiva la sessione ───────────────────────────────────
-      - name: Keep Windows Alive
-        run: |
-          $Minutes = [int]"${{ github.event.inputs.session_duration }}"
-          $Seconds = $Minutes * 60
-          Write-Host "⏳ La macchina rimarrà attiva per $Minutes minuti..."
-          Start-Sleep -Seconds $Seconds
+      # ─── 4. Mantieni vivo il Mac ─────────────────────────────────────────
+      - name: Keep Alive
+        run: sleep 3600
