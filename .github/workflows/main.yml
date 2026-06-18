@@ -1,4 +1,4 @@
-name: Mac OS Nativo Libero
+name: Mac OS Istantaneo con Ngrok
 
 on:
   workflow_dispatch:
@@ -9,45 +9,43 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Attiva lo Screen Sharing nativo del Mac ──────────────────────
+      # ─── 1. Attiva lo Screen Sharing nativo di Apple ─────────────────────
       - name: Enable Apple Remote Desktop
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -configure -clientopts -setvncpasswd -vncpasswd Simona26
-          echo "✅ VNC Apple attivo sulla porta 5900!"
+          echo "✅ VNC Apple pronto sulla porta 5900!"
 
-      # ─── 2. Installa l'interfaccia Web per il VNC (noVNC) ─────────────────
-      - name: Install Web VNC Interface
+      # ─── 2. Installa Ngrok velocemente ───────────────────────────────────
+      - name: Install Ngrok
+        run: brew install ngrok
+
+      # ─── 3. Avvia il tunnel TCP ultra-veloce con il tuo Token ────────────
+      - name: Start Ngrok TCP Tunnel
         run: |
-          brew install node
-          npm install -g websockify
-          git clone --depth 1 https://github.com/novnc/noVNC.git $HOME/noVNC
-          cp $HOME/noVNC/vnc.html $HOME/noVNC/index.html
-          # Avvia il proxy web sulla porta 6080 che punta al VNC del Mac
-          nohup websockify --web=$HOME/noVNC 6080 localhost:5900 </dev/null >/tmp/websockify.log 2>&1 &
+          ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
+          # Apriamo un tunnel TCP diretto sulla porta 5900 (il VNC del Mac)
+          nohup ngrok tcp 5900 </dev/null >/tmp/ngrok.log 2>&1 &
           sleep 5
 
-      # ─── 3. Avvia il Tunnel Libero con Pinggy (Niente chiavi o carte) ─────
-      - name: Start Pinggy Tunnel
-        run: |
-          # Pinggy crea un tunnel HTTP perfetto sulla porta 6080 usando solo SSH standard senza autenticazione obbligatoria
-          nohup ssh -o StrictHostKeyChecking=no -p 443 -R 0:localhost:6080 qr@a.pinggy.io </dev/null >/tmp/tunnel.log 2>&1 &
-          sleep 10
-
-      # ─── 4. Estrai il link finale e stampalo ─────────────────────────────
+      # ─── 4. Mostra i dati per l'app VNC Viewer ───────────────────────────
       - name: Get Connection Link
         run: |
-          cat /tmp/tunnel.log
-          # Estraiamo l'URL pubblico https generato da Pinggy
-          WEB_URL=$(grep -oE "https://[a-zA-Z0-9.-]+\.a\.pinggy\.io" /tmp/tunnel.log | head -n 1)
+          cat /tmp/ngrok.log
+          # Estraiamo l'indirizzo TCP di Ngrok (es. tcp://0.tcp.ngrok.io:12345)
+          RAW_URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
+          
+          # Puliamo l'URL togliendo "tcp://" perché l'app vuole solo l'indirizzo pulito
+          CLEAN_URL=$(echo "$RAW_URL" | sed 's/tcp:\/\///g')
           
           echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🍏 IL TUO VERO MAC OS VIA WEB È PRONTO!                ║"
+          echo "║       🍏 IL TUO MAC REMOTO È ONLINE E VELOCISSIMO!           ║"
           echo "╠══════════════════════════════════════════════════════════════╣"
           echo "║                                                              ║"
-          echo "║  Apri questo link direttamente sul browser del tuo iPhone:  ║"
+          echo "║  Apri l'app VNC Viewer sul tuo iPhone e inserisci:           ║"
           echo "║                                                              ║"
-          echo "║  👉 $WEB_URL/index.html?autoconnect=true&password=Simona26   ║"
+          echo "║  👉 INDIRIZZO:  $CLEAN_URL                                   ║"
+          echo "║  👉 PASSWORD:   Simona26                                     ║"
           echo "║                                                              ║"
           echo "╚══════════════════════════════════════════════════════════════╝"
 
