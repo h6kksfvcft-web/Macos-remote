@@ -1,4 +1,4 @@
-name: Unbrickable Linux Desktop Cloud
+name: Stable Linux Desktop Cloud
 
 on:
   workflow_dispatch:
@@ -60,52 +60,8 @@ jobs:
           nohup python3 /tmp/noVNC/utils/novnc_proxy --vnc localhost:5900 --listen 6080 > /tmp/novnc.log 2>&1 &
           sleep 3
 
-      # ─── 5. Tunnel Blindato Ngrok Integrato (Fix di Installazione) ───────────
-      - name: Start Ngrok Tunnel
-        run: |
-          # Installazione ufficiale pulita tramite il gestore pacchetti apt
-          curl -s https://ngrok-agent.s3.amazonaws.com/ngrok.asc | sudo tee /etc/apt/trusted.gpg.dev/ngrok.asc >/dev/null
-          echo "deb [signed-by=/etc/apt/trusted.gpg.dev/ngrok.asc] https://ngrok-agent.s3.amazonaws.com buster main" | sudo tee /etc/apt/sources.list.d/ngrok.list
-          sudo apt-get update && sudo apt-get install -y ngrok
-          
-          # Avvia il tunnel in modalità anonima sulla porta 6080
-          nohup ngrok http 6080 --log=stdout > /tmp/ngrok.log 2>&1 &
-          sleep 5
-          
-          # Estrae l'URL pubblico sicuro via API locale
-          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null)
-          if [ -n "$URL" ]; then
-            # Forza l'indirizzo in HTTPS sicuro per evitare i blocchi di Safari
-            CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
-            echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
-            echo "✅ Tunnel Ngrok attivato!"
-          else
-            echo "❌ Caduta connessione tunnel o limiti superati. Log:"
-            cat /tmp/ngrok.log
-            exit 1
-          fi
-
-      # ─── 6. Mostra il link per connetterti ──────────────────────────────────
-      - name: Display connection info
-        run: |
-          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          END_TIME=$(python3 -c "import datetime; print((datetime.datetime.utcnow() + datetime.timedelta(minutes=$SESSION_DURATION)).strftime('%H:%M UTC'))")
-
-          echo ""
-          echo "╔══════════════════════════════════════════════════════════════╗"
-          echo "║       🖥️  IL TUO DESKTOP CLOUD È PRONTO E FUNZIONANTE!       ║"
-          echo "╠══════════════════════════════════════════════════════════════╣"
-          echo "║                                                              ║"
-          echo "║  👉 ${TUNNEL_URL}/vnc.html?autoconnect=true&password=${VNC_PASS}"
-          echo "║                                                              ║"
-          printf "║  🔑 Password VNC :  %-41s║\n" "$VNC_PASS"
-          printf "║  ⏱️  Attivo fino  :  %-41s║\n" "$END_TIME"
-          echo "╚══════════════════════════════════════════════════════════════╝"
-          echo ""
-
-      # ─── 7. Mantieni vivo il flusso ─────────────────────────────────────────
-      - name: Keep session alive
-        run: |
-          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
-          SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
-          sleep $SLEEP_SECONDS
+      # ─── 5. Tunnel Automatico e Mostra Informazioni di Connessione ──────────
+      - name: Start Secure Web Tunnel (tmate)
+        uses: mxschmitt/action-tmate@v3
+        with:
+          sudo: true
