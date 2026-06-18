@@ -9,7 +9,7 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Attiva lo Screen Sharing nativo di Apple (1 secondo) ─────────
+      # ─── 1. Attiva lo Screen Sharing nativo di Apple ─────────────────────
       - name: Enable Apple Remote Desktop
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -restart -agent -privs -all
@@ -20,20 +20,19 @@ jobs:
       - name: Setup tmate Session
         run: |
           brew install tmate
-          # Avvia tmate in background creando una sessione pulita
+          # Avvia tmate in background
           tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait-options
+          # Usa il comando corretto per attendere la connessione al server
+          tmate -S /tmp/tmate.sock wait tmate-ready
           
-          # Recupera la stringa di connessione SSH/TCP
+          # Recupera la stringa di connessione SSH
           TMATE_SSH=$(tmate -S /tmp/tmate.sock display -p '#{tmate_ssh}')
           
-          # Estraiamo l'host e la porta (tmate ci dà qualcosa tipo: ssh -p 22222 uncodice@lon1.tmate.io)
-          # Lo trasformiamo nel formato pulito che serve a noi
+          # Estraiamo l'host e la porta per il VNC dell'iPhone
           SERVER_INFO=$(echo "$TMATE_SSH" | sed 's/ssh -p //')
           PORT=$(echo "$SERVER_INFO" | awk '{print $1}')
           HOST_USER=$(echo "$SERVER_INFO" | awk '{print $2}')
           HOST=$(echo "$HOST_USER" | cut -d'@' -f2)
-          USER=$(echo "$HOST_USER" | cut -d'@' -f1)
 
           echo "╔══════════════════════════════════════════════════════════════╗"
           echo "║       🍏 MAC OS IN CLOUD - METODO INDISTRUTTIBILE            ║"
