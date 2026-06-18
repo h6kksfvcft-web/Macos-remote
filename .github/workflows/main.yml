@@ -9,7 +9,7 @@ on:
         default: "60"
         type: string
       vnc_password:
-        description: "Password (Esattamente 8 caratteri)"
+        description: "Password d'accesso (Usa una password semplice, es. Simona26)"
         required: false
         default: "Simona26"
         type: string
@@ -20,46 +20,40 @@ jobs:
     timeout-minutes: 65
 
     steps:
-      # ─── 1. Installa i pacchetti necessari ───────────────────────────────
-      - name: Install Network Tools
+      # ─── 1. Installa Ngrok, il server VNC universale e Websockify ──────
+      - name: Install Network and VNC Tools
         run: |
           brew install ngrok
+          brew install TigerVNC
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
-      - name: Enable Native macOS Screen Sharing
+      # ─── 2. Configura e avvia il nuovo Server VNC indipendente ──────────
+      - name: Start Independent VNC Server
         run: |
+          # Spegniamo il firewall di macOS per sicurezza
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
-          # Configuriamo i database di Apple per il VNC classico (password di 8 caratteri)
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
+          # Creiamo la cartella per le impostazioni VNC dell'utente
+          mkdir -p ~/.vnc
           
-          # Impostiamo la password VNC legacy (Massimo 8 caratteri)
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy yes
-            
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvncpw "${{ github.event.inputs.vnc_password }}"
+          # Salviamo la tua password nel formato cifrato standard richiesto dal VNC
+          echo "${{ github.event.inputs.vnc_password }}" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
           
-          # Abilitiamo l'accesso a tutti gli utenti
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -access -on -privs -all -allowAccessFor -allUsers
+          # Avviamo il server grafico indipendente sulla porta standard 5901 (:1)
+          # Utilizza direttamente lo schermo virtuale bypassando i blocchi Apple
+          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
           
-          # Attiviamo e riavviamo l'agente grafico
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -restart -agent
-          
-          echo "✅ Server Apple pronto sulla porta 5900!"
+          echo "✅ Server VNC Universale avviato sulla porta 5901!"
 
-      # ─── 3. Configura l'interfaccia web noVNC (Ottimizzata) ───────────────
+      # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
         run: |
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
           
-          # Colleghiamo websockify gestendo correttamente i pacchetti grafici locali
-          nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
+          # Colleghiamo websockify (porta 6080) al nuovo server VNC (porta 5901)
+          nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5901 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 3
 
       # ─── 4. Connetti il Tunnel Ngrok in modalità HTTP (Gratuita) ──────────
