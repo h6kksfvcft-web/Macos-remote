@@ -31,9 +31,10 @@ jobs:
           # Aggiungiamo il tuo token di autenticazione
           ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
           
-          # Avviamo il tunnel TCP sulla porta standard del desktop remoto (3389)
-          Start-Process ngrok -ArgumentList "tcp 3389" -WindowStyle Hidden
-          Start-Sleep -Seconds 10
+          # Avviamo il tunnel TCP sulla porta del desktop remoto (3389) in background correttamente
+          Start-Process -FilePath "ngrok" -ArgumentList "tcp 3389" -NoNewWindow -RedirectStandardOutput "C:\ngrok.log" -RedirectStandardError "C:\ngrok_err.log"
+          
+          echo "⏳ Ngrok avviato in background, in attesa del tunnel..."
 
       # ─── 3. Attiva il Desktop Remoto in Windows e imposta la Password ────
       - name: Enable Windows Remote Desktop
@@ -47,13 +48,34 @@ jobs:
           $Password = ConvertTo-SecureString "${{ github.event.inputs.rdp_password }}" -AsPlainText -Force
           Set-LocalUser -Name "runneradmin" -Password $Password
           
-          echo "✅ Windows Remote Desktop configurato correttamente!"
+          echo "✅ Windows Remote Desktop abilitato e password impostata!"
 
-      # ─── 4. Estrai l'IP e la Porta Generati da Ngrok ──────────────────────
+      # ─── 4. Attesa Intelligente ed Estrazione dell'IP di Ngrok ────────────
       - name: Display Connection Details
         run: |
-          # Interroghiamo le API locali di Ngrok per recuperare l'indirizzo pubblico TCP
-          $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels"
+          $Attempts = 0
+          $MaxAttempts = 6
+          $NgrokApi = $null
+
+          # Ciclo di controllo: prova a connettersi alle API di Ngrok per un massimo di 30 secondi
+          while ($null -eq $NgrokApi -and $Attempts -lt $MaxAttempts) {
+              try {
+                  Start-Sleep -Seconds 5
+                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
+              } catch {
+                  $Attempts++
+                  Write-Host "⏳ Ngrok non è ancora pronto, riprovo... ($Attempts/$MaxAttempts)"
+              }
+          }
+
+          if ($null -eq $NgrokApi) {
+              Write-Host "❌ Errore: Ngrok non si è avviato in tempo. Ecco i log:"
+              if (Test-Path "C:\ngrok.log") { Get-Content "C:\ngrok.log" }
+              if (Test-Path "C:\ngrok_err.log") { Get-Content "C:\ngrok_err.log" }
+              Exit 1
+          }
+
+          # Estraiamo l'URL pubblico pulito
           $PublicUrl = $NgrokApi.tunnels.public_url
           $CleanAddress = $PublicUrl -replace "tcp://", ""
           
