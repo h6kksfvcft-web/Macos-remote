@@ -1,4 +1,4 @@
-name: Pure Native Windows Cloud
+name: Pure Native macOS Cloud
 
 on:
   workflow_dispatch:
@@ -6,92 +6,86 @@ on:
       session_duration:
         description: "Durata in minuti"
         required: false
-        default: "60"
+        default: "30"
         type: string
-      rdp_password:
+      vnc_password:
         description: "Password d'accesso"
         required: false
-        default: "SimoneLia2026!"
+        default: "SimoneLia2026"
         type: string
 
 jobs:
-  windows-cloud:
-    runs-on: windows-latest
-    timeout-minutes: 65
+  native-apple:
+    runs-on: macos-latest
+    timeout-minutes: 60
 
     steps:
-      # ─── 1. Installa Ngrok tramite Chocolatey ───────────────────────────
-      - name: Install and Configure Ngrok
+      # ─── 1. Installa Ngrok tramite Homebrew ──────────────────────────────
+      - name: Install Network Tools
         run: |
-          choco install ngrok --no-progress -y
+          brew install ngrok
+
+      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
+      - name: Enable Native macOS Screen Sharing
+        run: |
+          # Spegniamo il firewall di macOS per evitare ostruzioni locali
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
+          
+          # Forziamo il sistema ad accettare password VNC standard
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
+          
+          # Impostiamo la tua password nel pannello Apple
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvncpasswd -vncpasswd "${{ github.event.inputs.vnc_password }}"
+          
+          # Avviamo il servizio nativo con i massimi privilegi
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on -privs -all -restart -agent
+          
+          echo "✅ Server nativo Apple attivato sulla porta 5900!"
+
+      # ─── 3. Avvia il Tunnel Ngrok in modalità TCP ───────────────────────
+      - name: Connect Ngrok TCP Tunnel
+        run: |
+          # Configura il tuo token
           ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
-
-      # ─── 2. Attiva il Desktop Remoto (RDP) ufficiale di Windows ──────────
-      - name: Enable Remote Desktop (RDP)
-        run: |
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -name "fDenyTSConnections" -Value 0
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
-
-      # ─── 3. Imposta la Password dell'Amministratore ─────────────────────
-      - name: Configure Admin Password
-        run: |
-          $Password = ConvertTo-SecureString "${{ github.event.inputs.rdp_password }}" -AsPlainText -Force
-          Set-LocalUser -Name "runneradmin" -Password $Password
-
-      # ─── 4. Avvia il Tunnel Ngrok e controlla lo stato ───────────────────
-      - name: Start Ngrok Tunnel and Extract URL
-        run: |
-          # Avviamo ngrok reindirizzando l'output su un file log per evitare che si blocchi
-          cmd /c "start /B ngrok tcp 3389 > c:\ngrok_log.txt 2>&1"
           
-          Write-Host "In attesa che il tunnel Ngrok si colleghi ai server..."
-          $MaxTentativi = 15
-          $TunnelPronto = $false
+          # Apriamo un tunnel TCP diretto sulla porta 5900 (quella del Mac)
+          nohup ngrok tcp 5900 </dev/null >/tmp/ngrok.log 2>&1 &
+          sleep 10
           
-          for ($i = 1; $i -le $MaxTentativi; $i++) {
-              Start-Sleep -Seconds 3
-              try {
-                  $NgrokApi = Invoke-RestMethod -Uri "http://127.0.0.1:4040/api/tunnels" -ErrorAction Stop
-                  if ($NgrokApi.tunnels.Count -gt 0) {
-                      $PublicUrl = $NgrokApi.tunnels[0].public_url
-                      $CleanUrl = $PublicUrl -replace "tcp://", ""
-                      $TunnelPronto = $true
-                      break
-                  }
-              } catch {
-                  Write-Host "Tentativo in corso... Il server locale non risponde ancora..."
-              }
-          }
+          # Estraiamo l'indirizzo pubblico dedicato
+          URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
+          
+          if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
+            echo "❌ Errore tunnel Ngrok:"
+            cat /tmp/ngrok.log
+            exit 1
+          fi
+          
+          # Puliamo l'URL rimuovendo il prefisso "tcp://"
+          CLEAN_URL=$(echo "$URL" | sed 's/tcp:\/\///g')
+          echo "VNC_URL=$CLEAN_URL" >> "$GITHUB_ENV"
 
-          if (-not $TunnelPronto) {
-              Write-Host "Impossibile avviare il tunnel Ngrok. Ecco il contenuto del file log:"
-              if (Test-Path c:\ngrok_log.txt) { Get-Content c:\ngrok_log.txt }
-              exit 1
-          }
-
-          # Salviamo l'URL nelle variabili d'ambiente di GitHub per usarlo nello step successivo
-          echo "RDP_URL=$CleanUrl" | Out-File -FilePath $Env:GITHUB_ENV -Encoding utf8 -Append
-
-      # ─── 5. Mostra i dati di connessione per l'App ───────────────────────
-      - name: Display Connection Details
+      # ─── 4. Mostra i dati di connessione per l'Applicazione ───────────────
+      - name: Display Connection Link
         run: |
-          Write-Host "=========================================================="
-          Write-Host "      IL TUO COMPUTER WINDOWS CLOUD È PRONTO!          "
-          Write-Host "=========================================================="
-          Write-Host ""
-          Write-Host "Apri l'app 'Windows App' sul tuo iPhone/iPad e inserisci:"
-          Write-Host ""
-          Write-Host "👉 NOME PC (Host): ${{ env.RDP_URL }}"
-          Write-Host "👉 NOME UTENTE:    runneradmin"
-          Write-Host "👉 PASSWORD:       ${{ github.event.inputs.rdp_password }}"
-          Write-Host ""
-          Write-Host "=========================================================="
+          echo "╔══════════════════════════════════════════════════════════════╗"
+          echo "║       🍏 IL TUO AMBIENTE DI TEST MAC OS È IN LINEA!          ║"
+          echo "╠══════════════════════════════════════════════════════════════╣"
+          echo "║                                                              ║"
+          echo "║  Scarica l'app 'VNC Viewer' sul tuo iPhone/iPad e inserisci: ║"
+          echo "║                                                              ║"
+          echo "║  👉 INDIRIZZO (Address): ${VNC_URL}"
+          echo "║  👉 PASSWORD:            ${{ github.event.inputs.vnc_password }}"
+          echo "║                                                              ║"
+          echo "╚══════════════════════════════════════════════════════════════╝"
 
-      # ─── 6. Mantieni attiva la sessione per il tempo richiesto ───────────
-      - name: Keep Windows Alive
+      # ─── 5. Mantieni attiva la sessione ───────────────────────────────────
+      - name: Keep macOS alive
         run: |
-          $DurationMin = [int]"${{ github.event.inputs.session_duration }}"
-          $Seconds = $DurationMin * 60
-          Write-Host "Il server rimarrà attivo per $DurationMin minuti..."
-          Start-Sleep -Seconds $Seconds
+          SESSION_DURATION="${{ github.event.inputs.session_duration }}"
+          SLEEP_SECONDS=$(( SESSION_DURATION * 60 ))
+          echo "⏳ Il Mac rimarrà acceso per $SESSION_DURATION minuti..."
+          sleep $SLEEP_SECONDS
