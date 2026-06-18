@@ -34,48 +34,14 @@ jobs:
           
           echo "✅ Windows Remote Desktop abilitato e password impostata!"
 
-      # ─── 2. Avvia il Tunnel TCP Libero tramite Pinggy ─────────────────────
-      - name: Start Free TCP Tunnel
-        run: |
-          # Avviamo il tunnel TCP sulla porta 3389 usando il client SSH nativo di Windows.
-          # Accettiamo automaticamente le chiavi e salviamo l'output in un file di log.
-          Start-Process ssh -ArgumentList "-o StrictHostKeyChecking=no -o UserKnownHostsFile=\\`$null -R 0:localhost:3389 tcp@pinggy.io v=1" -NoNewWindow -RedirectStandardOutput "C:\pinggy.log" -RedirectStandardError "C:\pinggy_err.log"
-          
-          echo "⏳ Tunnel TCP in fase di attivazione..."
-          Start-Sleep -Seconds 12
+      # ─── 2. Avvia il Tunnel RDP tramite l'estensione ufficiale Tmate ─────
+      - name: Setup Tmate RDP Tunnel
+        uses: mxschmitt/action-tmate@v3
+        timeout-minutes: 5
+        with:
+          limit-access-to-actor: false
 
-      # ─── 3. Estrai l'indirizzo pubblico dai Log di Pinggy ─────────────────
-      - name: Display Connection Details
-        run: |
-          if (Test-Path "C:\pinggy.log") {
-              $LogContent = Get-Content "C:\pinggy.log" -Raw
-              # Cerchiamo la stringa tcp:// generata da Pinggy
-              if ($LogContent -match "tcp://([^ \r\n]+)") {
-                  $CleanAddress = $Matches[1]
-                  
-                  Write-Host "╔══════════════════════════════════════════════════════════════╗" -ForegroundColor Green
-                  Write-Host "║       🪟 IL TUO AMBIENTE DI TEST WINDOWS È IN LINEA!          ║" -ForegroundColor Green
-                  Write-Host "╠══════════════════════════════════════════════════════════════╣" -ForegroundColor Green
-                  Write-Host "║                                                              ║" -ForegroundColor Green
-                  Write-Host "║  Usa l'app ufficiale 'Remote Desktop' (di Microsoft)         ║" -ForegroundColor Green
-                  Write-Host "║                                                              ║" -ForegroundColor Green
-                  Write-Host "║  👉 INDIRIZZO PC (IP:Porta): $CleanAddress" -ForegroundColor Yellow
-                  Write-Host "║  👉 NOME UTENTE:             runneradmin" -ForegroundColor Yellow
-                  Write-Host "║  👉 PASSWORD:                ${{ github.event.inputs.rdp_password }}" -ForegroundColor Yellow
-                  Write-Host "║                                                              ║" -ForegroundColor Green
-                  Write-Host "╚══════════════════════════════════════════════════════════════╝" -ForegroundColor Green
-              } else {
-                  Write-Host "❌ Impossibile trovare l'URL nel log di Pinggy. Contenuto:"
-                  Get-Content "C:\pinggy.log"
-                  Exit 1
-              }
-          } else {
-              Write-Host "❌ Il file di log di Pinggy non è stato creato. Errore:"
-              if (Test-Path "C:\pinggy_err.log") { Get-Content "C:\pinggy_err.log" }
-              Exit 1
-          }
-
-      # ─── 4. Mantieni attiva la sessione ───────────────────────────────────
+      # ─── 3. Mantieni attiva la sessione ───────────────────────────────────
       - name: Keep Windows Alive
         run: |
           $Minutes = [int]"${{ github.event.inputs.session_duration }}"
