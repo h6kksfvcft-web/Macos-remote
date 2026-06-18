@@ -9,7 +9,7 @@ on:
         default: "60"
         type: string
       vnc_password:
-        description: "Password d'accesso (Usa una password semplice, es. Simona26)"
+        description: "Password d'accesso (Es. Simona26)"
         required: false
         default: "Simona26"
         type: string
@@ -20,31 +20,39 @@ jobs:
     timeout-minutes: 65
 
     steps:
-      # ─── 1. Installa Ngrok, il server VNC universale e Websockify ──────
+      # ─── 1. Installa Ngrok, TigerVNC e Websockify ────────────────────────
       - name: Install Network and VNC Tools
         run: |
           brew install ngrok
           brew install TigerVNC
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Configura e avvia il nuovo Server VNC indipendente ──────────
+      # ─── 2. Configura e avvia il Server VNC con Python ───────────────────
       - name: Start Independent VNC Server
         run: |
           # Spegniamo il firewall di macOS per sicurezza
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
-          # Creiamo la cartella per le impostazioni VNC dell'utente
+          # Creiamo la cartella per le impostazioni VNC
           mkdir -p ~/.vnc
           
-          # Salviamo la tua password nel formato cifrato standard richiesto dal VNC
-          echo "${{ github.event.inputs.vnc_password }}" | vncpasswd -f > ~/.vnc/passwd
+          # Utilizziamo Python per scrivere la password in formato binario compatibile con il VNC
+          python3 -c "
+          import os
+          vnc_pass = '${{ github.event.inputs.vnc_password }}'.encode('utf-8')[:8]
+          vnc_pass = vnc_pass.ljust(8, b'\x00')
+          # Semplice cifratura VNC (inversione dei bit)
+          key = bytes([int('{:08b}'.format(b)[::-1], 2) for b in b'\xe8\x4a\x56\xb1\x97\xda\x0e\x41'])
+          encrypted = bytes([b ^ key[i] for i, b in enumerate(vnc_pass)])
+          with open(os.path.expanduser('~/.vnc/passwd'), 'wb') as f:
+              f.write(encrypted)
+          "
           chmod 600 ~/.vnc/passwd
           
-          # Avviamo il server grafico indipendente sulla porta standard 5901 (:1)
-          # Utilizza direttamente lo schermo virtuale bypassando i blocchi Apple
-          vncserver :1 -geometry 1280x720 -depth 24 -localhost no
+          # Avviamo il server grafico TigerVNC usando il percorso assoluto corretto
+          /opt/homebrew/bin/vncserver :1 -geometry 1280x720 -depth 24 -localhost no
           
-          echo "✅ Server VNC Universale avviato sulla porta 5901!"
+          echo "✅ Server VNC Universale avviato correttamente!"
 
       # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
@@ -52,11 +60,11 @@ jobs:
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
           
-          # Colleghiamo websockify (porta 6080) al nuovo server VNC (porta 5901)
+          # Colleghiamo websockify (porta 6080) al server VNC (porta 5901)
           nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5901 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 3
 
-      # ─── 4. Connetti il Tunnel Ngrok in modalità HTTP (Gratuita) ──────────
+      # ─── 4. Connetti il Tunnel Ngrok in modalità HTTP ────────────────────
       - name: Connect Ngrok HTTP Tunnel
         run: |
           ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
