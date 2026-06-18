@@ -20,25 +20,23 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      # ─── 1. Configura la password sul Mac ─────────────────────────────────
+      # ─── 1. Forza la password usando sysadminctl (Evita l'errore eDSAuthFailed) ───
       - name: Configure macOS User Password
         run: |
-          sudo dscl . -passwd /Users/$USER "${{ github.event.inputs.vnc_password }}"
+          sudo sysadminctl -deletePassword /Users/$USER
+          sudo sysadminctl -newPassword "${{ github.event.inputs.vnc_password }}" -resetPasswordFor /Users/$USER
           echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
 
-      # ─── 2. Installa gli strumenti di rete e un server VNC alternativo ────
-      - name: Install Network Tools and VNC
+      # ─── 2. Installa gli strumenti di rete ────────────────────────────────
+      - name: Install Network Tools on macOS
         run: |
-          brew install ngrok python MacGestalt/tap/macvnc 2>/dev/null || brew install ngrok python
+          brew install ngrok python
           pip3 install websockify
 
-      # ─── 3. Avvia il server grafico e il Tunnel Ngrok ─────────────────────
+      # ─── 3. Avvia websockify e il Tunnel Ngrok ────────────────────────────
       - name: Connect Ngrok Tunnel
         run: |
-          # Avviamo il server VNC sulla porta standard 5900
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart -activate -configure -access -on -privs -all 2>/dev/null || true
-          
-          # Convertiamo il segnale per il browser sulla porta 6080
+          # Avviamo websockify sulla porta 6080 legata al VNC locale del Mac (5900)
           nohup websockify 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 3
           
