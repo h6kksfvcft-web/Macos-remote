@@ -26,25 +26,28 @@ jobs:
           brew install ngrok
           pip3 install websockify --break-system-packages
 
-      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple (Sintassi Corretta) ──
+      # ─── 2. Attiva lo Screen Sharing Ufficiale Apple ──────────────────────
       - name: Enable Native macOS Screen Sharing
         run: |
-          # Spegniamo il firewall di macOS per evitare blocchi sulle porte locali
+          # Spegniamo il firewall di macOS per evitare blocchi locali
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off
           
           # Abilitiamo l'accesso VNC legacy globale nelle preferenze
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAlwaysMultiUser -bool true
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement VNCAcceptAllConnections -bool true
           
-          # Configura la password con l'argomento corretto per il Mac (-setvncpw)
+          # Configura i parametri uno alla volta per evitare l'errore "Extra arguments"
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -clientopts -setvnclegacy yes -setvncpw "${{ github.event.inputs.vnc_password }}"
+            -configure -clientopts -setvnclegacy yes
+            
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -clientopts -setvncpw "${{ github.event.inputs.vnc_password }}"
           
-          # Attiva il servizio nativo per l'utente runner
+          # Attiva il servizio nativo e riavvia l'agente grafico
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -privs -all -restart -agent
           
-          echo "✅ Server nativo Apple attivato sulla porta 5900!"
+          echo "✅ Server nativo Apple configurato e attivato correttamente!"
 
       # ─── 3. Configura l'interfaccia web noVNC ─────────────────────────────
       - name: Setup Web Interface View
@@ -52,21 +55,18 @@ jobs:
           git clone --depth 1 https://github.com/novnc/noVNC.git /tmp/noVNC
           cp /tmp/noVNC/vnc.html /tmp/noVNC/index.html
           
-          # Colleghiamo websockify (porta HTTP 6080) al server Apple (porta 5900)
+          # Colleghiamo websockify (porta 6080) al server grafico del Mac (porta 5900)
           nohup websockify --web=/tmp/noVNC/ 6080 127.0.0.1:5900 </dev/null >/tmp/websockify.log 2>&1 &
           sleep 3
 
-      # ─── 4. Connetti il Tunnel Ngrok in modalità HTTP (Gratuita) ──────────
+      # ─── 4. Connetti il Tunnel Ngrok in modalità HTTP ────────────────────
       - name: Connect Ngrok HTTP Tunnel
         run: |
-          # Configura il tuo token
           ngrok config add-authtoken "3EoMAQM9GPofB8ve0Ur2rgD5K8t_2tqfrr56vyM8QNhUNiELX"
           
-          # Usiamo HTTP sulla porta 6080 (Evita il blocco della carta di credito!)
           nohup ngrok http 6080 </dev/null >/tmp/ngrok.log 2>&1 &
           sleep 12
           
-          # Estraiamo l'URL pubblico generato
           URL=$(curl -s http://localhost:4040/api/tunnels | python3 -c "import sys, json; print(json.load(sys.stdin)['tunnels'][0]['public_url'])" 2>/dev/null || echo "ERROR")
           
           if [ "$URL" = "ERROR" ] || [ -z "$URL" ]; then
@@ -75,7 +75,6 @@ jobs:
             exit 1
           fi
           
-          # Forza l'uso di HTTPS per la compatibilità con i browser mobile
           CLEAN_URL=$(echo "$URL" | sed 's/http:\/\//https:\/\//g')
           echo "TUNNEL_URL=$CLEAN_URL" >> "$GITHUB_ENV"
           echo "VNC_PASS=${{ github.event.inputs.vnc_password }}" >> "$GITHUB_ENV"
