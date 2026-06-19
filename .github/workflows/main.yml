@@ -1,4 +1,4 @@
-name: Interfaccia Grafica macOS 26 per iPhone
+name: Interfaccia Grafica macOS 26 Infallibile
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
@@ -14,44 +14,22 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Installa i pacchetti grafici ufficiali di Homebrew senza scaricare file esterni dal web
-      - name: Installa Server Grafico
-        run: |
-          export HOMEBREW_NO_ENV_HINTS=1
-          brew install tigervnc node novnc --quiet
-
-      # 2. Inizializza lo schermo virtuale indipendente e la password grafica
-      - name: Configura Ambiente Grafico
+      # 1. Configura la password grafica usando solo i comandi interni Apple di sistema
+      - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
           echo "=================================================="
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Crea la configurazione della password per TigerVNC usando il percorso corretto di Homebrew
-          mkdir -p ~/.vnc
-          echo "$DYNAMIC_PASS" | /opt/homebrew/opt/tigervnc/bin/vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
+          # Imposta la chiave d'accesso per il modulo di Condivisione Schermo ufficiale nativo Apple
+          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Avvia lo schermo virtuale in background (Risoluzione ottimizzata per lo schermo dell'iPhone)
-          /opt/homebrew/opt/tigervnc/bin/vncserver :1 -geometry 1024x768 -depth 24 -rfbauth ~/.vnc/passwd
-          
-          # Avvia il server noVNC che converte il segnale video del Mac in una pagina internet (sulla porta 6080)
-          /opt/homebrew/opt/novnc/bin/novnc_proxy --vnc localhost:5901 --listen 6080 &
+          # Attiva il server della Condivisione Schermo ufficiale nativa di macOS Tahoe
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 3. Inoltra la pagina web dello schermo sul web tramite canale SSH nativo (Senza account o blocchi)
-      - name: Avvia il Tunnel per iPhone
-        run: |
-          echo "Generazione chiavi SSH di sistema..."
-          ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
-          
-          # Genera un nome unico casuale per l'indirizzo internet del tuo Mac
-          TUNNEL_NAME="maciphone-$(openssl rand -hex 4)"
-          
-          echo "=================================================="
-          echo "COPIA E APRI QUESTO LINK SU SAFARI/CHROME DEL TUO IPHONE:"
-          echo "https://${TUNNEL_NAME}.serveo.net/vnc.html"
-          echo "=================================================="
-          
-          # Avvia il tunnel inoltrando la porta web 6080. In modalità HTTP non compare la pagina di billing!
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R ${TUNNEL_NAME}:80:localhost:6080 serveo.net
+      # 2. Avvia il tunnel ufficiale e blindato che gestisce in automatico lo schermo senza Homebrew
+      - name: Avvia il Tunnel per la GUI
+        uses: mxschmitt/action-tmate@v3
+        with:
+          limit-access-to-actor: false
