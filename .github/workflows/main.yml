@@ -14,7 +14,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Configura la password di accesso al desktop grafico nativo
+      # 1. Configura la password di accesso al desktop grafico nativo di macOS
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -22,33 +22,36 @@ jobs:
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Cambia la password del pannello VNC nativo di macOS
+          # Salva la chiave d'accesso per il servizio VNC Apple
           mkdir -p ~/.vnc
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Attiva la condivisione dello schermo ufficiale integrata in Apple Tahoe
+          # Attiva la condivisione dello schermo ufficiale integrata in macOS Tahoe
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Installa ed esegue il tunnel tramite Homebrew (Evita file zip corrotti)
+      # 2. Configura ed esegue il tunnel tramite Pagekite (Senza obbligo di account)
       - name: Avvia il Tunnel per la GUI
         run: |
-          echo "Installazione ufficiale di ngrok in corso..."
-          export HOMEBREW_NO_ENV_HINTS=1
+          echo "Configurazione del tunnel grafico con Pagekite..."
           
-          # Installa ngrok usando il gestore pacchetti nativo del Mac
-          brew install ngrok/ngrok/ngrok --quiet
+          # Scarica lo script ufficiale standalone di pagekite
+          curl -s https://pagekite.net -o pagekite.py
+          chmod +x pagekite.py
           
-          # Avvia il tunnel sulla porta TCP 5900 (la porta dello schermo del Mac)
-          ngrok tcp 5900 --log=stdout > /dev/null &
-          sleep 8
+          # Genera un nome casuale e univoco per il tuo link di rete
+          RANDOM_NAME="mac-gui-$(openssl rand -hex 4)"
           
           echo "=================================================="
           echo "DATI PER IL TUO CLIENT VNC (Es: RealVNC o Condivisione Schermo):"
-          # Interroga le API locali di ngrok per estrarre l'indirizzo TCP live
-          curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' || echo "Nessun tunnel trovato. Verifica i dettagli o riavvia."
+          echo "Indirizzo a cui connettersi: ${RANDOM_NAME}.pagekite.me"
           echo "=================================================="
           
-          # Blocca il flusso per mantenere la macchina sempre online per te
+          # Avvia il tunnel sulla porta nativa dello schermo del Mac (5900)
+          # Accetta automaticamente i termini d'uso del servizio gratuito temporaneo
+          python3 pagekite.py --clean 5900 ${RANDOM_NAME}.pagekite.me --defaults > /dev/null &
+          sleep 8
+          
+          # Mantiene attivo il workflow per permetterti l'utilizzo visivo
           while true; do
             sleep 10
           done
