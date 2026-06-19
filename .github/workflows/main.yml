@@ -1,7 +1,7 @@
-name: GUI macOS 26 per iPhone Definitivo
+name: GUI macOS 26 Infallibile per iPhone
 
 on: 
-  workflow_dispatch: # Avvio manuale con un clic
+  workflow_dispatch: # Avvio manuale con un clic da GitHub
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Attiva lo schermo e imposta la password (Nativo Apple)
+      # 1. Attiva lo schermo del Mac e imposta la password (Nativo Apple)
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -25,32 +25,32 @@ jobs:
           # Imposta la chiave d'accesso per il servizio Condivisione Schermo Apple
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Forza l'attivazione immediata del server grafico del Mac
+          # Cambia la password dell'utente 'runner' a livello di sistema per il tunnel SSH
+          echo -e "PasswordMac123\nPasswordMac123" | sudo passwd runner
+          
+          # Forza l'attivazione del server grafico del Mac
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Crea il tunnel remoto indistruttibile con Telebit (Zero blocchi, zero contratti)
-      - name: Avvia il Tunnel per iPhone
+      # 2. Configura un'estensione di rete pubblica ufficiale temporanea
+      - name: Attiva Connessione Diretta
         run: |
-          echo "Installazione del modulo di rete Telebit..."
-          # Scarica ed esegue l'installatore ufficiale standalone per il Mac
-          curl -s https://telebit.io | bash > /dev/null 2>&1 || true
+          echo "Inizializzazione del tunnel di sistema..."
           
-          echo "Configurazione del link di inoltro TCP..."
-          # Configura telebit per ascoltare la porta dello schermo VNC (5900)
-          ~/telebit http 5900 > /tmp/telebit.log 2>&1 &
-          sleep 8
+          # Crea un tunnel SSH invertito usando il server universale di test integrato nel terminale del Mac
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R 80:localhost:5900 localhost.run > /tmp/tunnel.txt 2>&1 &
+          sleep 10
           
           echo "=================================================="
-          echo "INDIRIZZO DA INSERIRE NELL'APP VNC DEL TUO IPHONE:"
-          # Estrae l'indirizzo pubblico assegnato gratuitamente (.telebit.io)
-          grep -o '[a-z0-9]*\.telebit\.io' /tmp/telebit.log || echo "Generazione in corso, controlla l'output sotto..."
+          echo "DATI DA INSERIRE SUL TUO IPHONE:"
+          # Estrae l'indirizzo internet univoco generato per te
+          grep -o '[a-z0-9]*\.lhrtunnel\.link' /tmp/tunnel.txt || echo "Link in generazione, controlla i log completi sotto..."
           echo "=================================================="
           
-          # Stampa i dettagli completi sul terminale di GitHub
-          cat /tmp/telebit.log
+          # Mostra i log di rete completi a schermo per darti l'indirizzo in chiaro
+          cat /tmp/tunnel.txt
           echo "=================================================="
           
-          # Mantiene il server online senza limiti di tempo
+          # Mantiene la macchina virtuale online senza scadenze finché non la chiudi tu
           while true; do
             sleep 10
           done
