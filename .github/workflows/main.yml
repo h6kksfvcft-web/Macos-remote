@@ -1,7 +1,10 @@
-name: GUI macOS 26 Corretto per Tahoe
+name: GUI macOS 26 Stabile e Funzionante
 
 on: 
   workflow_dispatch:
+
+env:
+  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
 
 jobs:
   interfaccia-grafica:
@@ -9,32 +12,36 @@ jobs:
 
     steps:
       - name: Checkout del codice
-        uses: actions/checkout@v4
+        uses: actions/checkout@v4.2.2
 
-      # Configura lo schermo con comandi specifici per macOS Tahoe
-      - name: Configura Schermo con Password Casuale
+      # Installa gli strumenti software per emulare la grafica e il tunnel
+      - name: Installa Pacchetti Grafici e Tunnel
+        run: |
+          export HOMEBREW_NO_ENV_HINTS=1
+          brew install x11vnc tmate --quiet
+
+      # Crea lo schermo virtuale e configura la password di accesso
+      - name: Inizializza Schermo Virtuale e Password
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
           echo "=================================================="
-          echo "LA TUA PASSWORD DI ACCESSO È: $DYNAMIC_PASS"
+          echo "LA TUA PASSWORD DI ACCESSO VNC È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Cambia la password in modo forzato senza chiedere la vecchia (specifico per macOS)
-          sudo sysadminctl -deleteUserPassword runner
-          sudo sysadminctl -resetPasswordFor runner -newPassword "$DYNAMIC_PASS"
+          # Salva la password in modo sicuro per il server grafico
+          mkdir -p ~/.vnc
+          x11vnc -storepasswd "$DYNAMIC_PASS" ~/.vnc/passwd
           
-          # Attiva la condivisione schermo con la sintassi corretta per Tahoe
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -privs -all \
-            -restart -agent
+          # Avvia lo schermo virtuale in background (Risoluzione Full HD)
+          Xvfb :1 -screen 0 1920x1080x24 &
+          export DISPLAY=:1
+          
+          # Avvia il server VNC agganciato allo schermo virtuale
+          x11vnc -rfbauth ~/.vnc/passwd -display :1 -rfbport 5900 -forever -bg
 
-      # Installa tmate e blocca la sessione per l'uso
-      - name: Installa e Avvia Tunnel Grafico
+      # Crea il tunnel e forza il blocco della sessione di GitHub Actions
+      - name: Avvia Tunnel e Blocca Sessione
         run: |
-          export HOMEBREW_NO_ENV_HINTS=1
-          brew install tmate --quiet
-          
           ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
           tmate -S /tmp/tmate.sock new-session -d
@@ -45,7 +52,7 @@ jobs:
           tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           echo "=================================================="
           
-          # Forza il mantenimento dello stato attivo della macchina
-          while [ -f /tmp/tmate.sock ]; do 
-            sleep 5
+          # Loop infinito robusto: impedisce a GitHub di chiudere il workflow
+          while [ -f /tmp/tmate.sock ]; do
+            sleep 10
           done
