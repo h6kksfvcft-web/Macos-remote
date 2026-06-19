@@ -14,7 +14,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Configura la password di accesso al desktop grafico
+      # 1. Configura la password di accesso al desktop grafico nativo
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -29,25 +29,26 @@ jobs:
           # Attiva la condivisione dello schermo ufficiale integrata in Apple Tahoe
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Configura il tunnel con Ngrok (Estremamente stabile per la trasmissione video)
+      # 2. Installa ed esegue il tunnel tramite Homebrew (Evita file zip corrotti)
       - name: Avvia il Tunnel per la GUI
         run: |
-          echo "Configurazione del server video in corso..."
-          # Scarica il binario ufficiale di Ngrok per macOS Apple Silicon (ARM64)
-          curl -sL https://equinox.io -o ngrok.zip
-          unzip -q ngrok.zip
+          echo "Installazione ufficiale di ngrok in corso..."
+          export HOMEBREW_NO_ENV_HINTS=1
           
-          # Avvia il tunnel sulla porta TCP 5900 (la porta nativa dello schermo del Mac)
-          ./ngrok tcp 5900 --log=stdout > /dev/null &
-          sleep 5
+          # Installa ngrok usando il gestore pacchetti nativo del Mac
+          brew install ngrok/ngrok/ngrok --quiet
+          
+          # Avvia il tunnel sulla porta TCP 5900 (la porta dello schermo del Mac)
+          ngrok tcp 5900 --log=stdout > /dev/null &
+          sleep 8
           
           echo "=================================================="
           echo "DATI PER IL TUO CLIENT VNC (Es: RealVNC o Condivisione Schermo):"
-          # Estrae l'indirizzo TCP generato dal tunnel
-          curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' || echo "Errore di rete, riprova..."
+          # Interroga le API locali di ngrok per estrarre l'indirizzo TCP live
+          curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' || echo "Nessun tunnel trovato. Verifica i dettagli o riavvia."
           echo "=================================================="
           
-          # Mantiene il server online per non far chiudere GitHub Actions
+          # Blocca il flusso per mantenere la macchina sempre online per te
           while true; do
             sleep 10
           done
