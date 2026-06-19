@@ -1,4 +1,4 @@
-name: Interfaccia Grafica macOS 26 Funzionante
+name: Interfaccia Grafica macOS 26 Tahoe
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
@@ -14,52 +14,40 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Installa TigerVNC e l'interfaccia web noVNC
-      - name: Installa Server Grafico
-        run: |
-          export HOMEBREW_NO_ENV_HINTS=1
-          brew install tigervnc node --quiet
-          npm install -g novnc --quiet
-
-      # 2. Configura e avvia lo schermo usando i percorsi assoluti corretti (Risolve Errore 127)
-      - name: Inizializza Ambiente Grafico
+      # 1. Configura la password di accesso al desktop grafico
+      - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
           echo "=================================================="
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Crea la cartella di configurazione grafica
+          # Cambia la password del pannello VNC nativo di macOS
           mkdir -p ~/.vnc
+          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Usa il percorso assoluto di TigerVNC per creare la password (Risolve Errore 127)
-          echo "$DYNAMIC_PASS" | /opt/homebrew/opt/tigervnc/bin/vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
-          
-          # Avvia lo schermo virtuale indipendente (Display :1)
-          /opt/homebrew/opt/tigervnc/bin/vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
-          
-          # Converte lo schermo in una pagina web interattiva sulla porta 6080
-          novnc --vnc localhost:5901 --listen 6080 &
+          # Attiva la condivisione dello schermo ufficiale integrata in Apple Tahoe
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 3. Crea il link web immediato ed evita la chiusura del server
-      - name: Avvia il Link Web per la GUI
+      # 2. Configura il tunnel con Ngrok (Estremamente stabile per la trasmissione video)
+      - name: Avvia il Tunnel per la GUI
         run: |
-          echo "Generazione del link di accesso visivo in corso..."
-          # Scarica il gestore di tunnel rapido per la porta web grafica
+          echo "Configurazione del server video in corso..."
+          # Scarica il binario ufficiale di Ngrok per macOS Apple Silicon (ARM64)
           curl -sL https://equinox.io -o ngrok.zip
           unzip -q ngrok.zip
           
-          # Avvia il tunnel sulla porta dell'interfaccia web
-          ./ngrok http 6080 --log=stdout > /dev/null &
+          # Avvia il tunnel sulla porta TCP 5900 (la porta nativa dello schermo del Mac)
+          ./ngrok tcp 5900 --log=stdout > /dev/null &
           sleep 5
           
           echo "=================================================="
-          echo "CLICCA SUL LINK SOTTOSTANTE PER VEDERE IL MAC:"
-          curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok-free.app' || echo "Riprova tra pochi secondi..."
+          echo "DATI PER IL TUO CLIENT VNC (Es: RealVNC o Condivisione Schermo):"
+          # Estrae l'indirizzo TCP generato dal tunnel
+          curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*' || echo "Errore di rete, riprova..."
           echo "=================================================="
           
-          # Mantiene la macchina virtuale attiva per farti usare la grafica
+          # Mantiene il server online per non far chiudere GitHub Actions
           while true; do
             sleep 10
           done
