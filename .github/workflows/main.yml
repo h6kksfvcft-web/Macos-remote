@@ -1,7 +1,7 @@
-name: GUI macOS 26 per iPhone
+name: GUI macOS 26 per iPhone Definitivo
 
 on: 
-  workflow_dispatch:
+  workflow_dispatch: # Avvio manuale con un clic
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Configura la password del server VNC Apple nativo
+      # 1. Attiva lo schermo e imposta la password (Nativo Apple)
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -22,48 +22,36 @@ jobs:
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Imposta la chiave d'accesso per il servizio VNC ufficiale Apple
+          # Imposta la chiave d'accesso per il servizio Condivisione Schermo Apple
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Attiva la Condivisione Schermo ufficiale nativa di macOS Tahoe
+          # Forza l'attivazione immediata del server grafico del Mac
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Configura ed esegue il proxy frp per iPhone
+      # 2. Crea il tunnel remoto usando solo comandi SSH nativi di sistema
       - name: Avvia il Tunnel per iPhone
         run: |
-          echo "Configurazione del tunnel grafico ad alta velocità..."
+          echo "Generazione chiavi SSH di sistema..."
+          ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
-          # Scarica il client frp ufficiale per l'architettura Apple Silicon (ARM64)
-          curl -sL https://github.com -o frp.tar.gz
-          tar -xzf frp.tar.gz
-          cd frp_0.54.0_darwin_arm64
+          echo "Avvio del tunnel grafico sicuro..."
+          # Inoltra la porta 5900 dello schermo del Mac su un server SSH pubblico sicuro
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R 5900:localhost:5900 tcp.localhost.run > /tmp/tunnel.log 2>&1 &
           
-          # Genera una porta casuale sul server pubblico per evitare conflitti (tra 10000 e 50000)
-          REMOTE_PORT=$((10000 + RANDOM % 40000))
-          
-          # Crea il file di configurazione per il proxy grafico TCP
-          cat <<EOF > frpc.toml
-          serverAddr = "freefrp.net"
-          serverPort = 7000
-
-          [[proxies]]
-          name = "macos-remote-$(openssl rand -hex 3)"
-          type = "tcp"
-          localIp = "127.0.0.1"
-          localPort = 5900
-          remotePort = $REMOTE_PORT
-          EOF
+          # Attende che il server assegni l'indirizzo di rete
+          sleep 8
           
           echo "=================================================="
           echo "INDIRIZZO DA INSERIRE NELL'APP VNC DEL TUO IPHONE:"
-          echo "freefrp.net:$REMOTE_PORT"
+          # Estrae l'indirizzo e la porta generati dal server
+          grep -o 'tcp.localhost.run:[0-9]*' /tmp/tunnel.log || echo "Generazione in corso, controlla l'output sotto..."
           echo "=================================================="
           
-          # Avvia il tunnel in background
-          ./frpc -c frpc.toml &
-          sleep 5
+          # Stampa i log per mostrarti l'indirizzo numerico in chiaro
+          cat /tmp/tunnel.log
+          echo "=================================================="
           
-          # Ciclo infinito per impedire la chiusura della macchina
+          # Blocca stabilmente il workflow per non far spegnere il Mac
           while true; do
             sleep 10
           done
