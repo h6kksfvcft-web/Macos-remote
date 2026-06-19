@@ -1,58 +1,38 @@
-name: GUI macOS 26 Stabile e Funzionante
+name: Terminale macOS 26 Stabile
 
 on: 
-  workflow_dispatch:
+  workflow_dispatch: # Avvio manuale con un clic
 
 env:
   ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
 
 jobs:
-  interfaccia-grafica:
-    runs-on: macos-26
+  interfaccia-remota:
+    runs-on: macos-26 # Gira nativamente su Apple Silicon ARM64
 
     steps:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # Installa gli strumenti software per emulare la grafica e il tunnel
-      - name: Installa Pacchetti Grafici e Tunnel
+      # Installa direttamente il gestore di tunnel ufficiale
+      - name: Configura e Avvia Terminale Remoto
         run: |
           export HOMEBREW_NO_ENV_HINTS=1
-          brew install x11vnc tmate --quiet
-
-      # Crea lo schermo virtuale e configura la password di accesso
-      - name: Inizializza Schermo Virtuale e Password
-        run: |
-          DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
-          echo "=================================================="
-          echo "LA TUA PASSWORD DI ACCESSO VNC È: $DYNAMIC_PASS"
-          echo "=================================================="
+          brew install tmate --quiet
           
-          # Salva la password in modo sicuro per il server grafico
-          mkdir -p ~/.vnc
-          x11vnc -storepasswd "$DYNAMIC_PASS" ~/.vnc/passwd
-          
-          # Avvia lo schermo virtuale in background (Risoluzione Full HD)
-          Xvfb :1 -screen 0 1920x1080x24 &
-          export DISPLAY=:1
-          
-          # Avvia il server VNC agganciato allo schermo virtuale
-          x11vnc -rfbauth ~/.vnc/passwd -display :1 -rfbport 5900 -forever -bg
-
-      # Crea il tunnel e forza il blocco della sessione di GitHub Actions
-      - name: Avvia Tunnel e Blocca Sessione
-        run: |
+          # Configura la chiave SSH temporanea richiesta per agganciare il server
           ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
+          # Inizializza la sessione remota tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           
           echo "=================================================="
-          echo "LINK PER CONNETTERTI IN INTERFACCIA GRAFICA:"
+          echo "CLICCA SUL LINK SOTTOSTANTE PER ENTRARE NEL MAC:"
           tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           echo "=================================================="
           
-          # Loop infinito robusto: impedisce a GitHub di chiudere il workflow
+          # Ciclo di controllo anti-chiusura: mantiene il runner attivo per te
           while [ -f /tmp/tmate.sock ]; do
             sleep 10
           done
