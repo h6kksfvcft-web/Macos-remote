@@ -1,4 +1,4 @@
-name: Interfaccia Grafica macOS 26 Tahoe
+name: Interfaccia Grafica macOS 26 Funzionante
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
@@ -14,7 +14,7 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Configura la password di accesso al desktop grafico nativo di macOS
+      # 1. Configura la password del server VNC Apple nativo
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -22,36 +22,35 @@ jobs:
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Salva la chiave d'accesso per il servizio VNC Apple
-          mkdir -p ~/.vnc
+          # Imposta la chiave d'accesso per il servizio VNC ufficiale Apple
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Attiva la condivisione dello schermo ufficiale integrata in macOS Tahoe
+          # Attiva la Condivisione Schermo ufficiale nativa di macOS Tahoe
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Configura ed esegue il tunnel tramite Pagekite (Senza obbligo di account)
-      - name: Avvia il Tunnel per la GUI
+      # 2. Installa cloudflared tramite Homebrew per generare il link pubblico senza account
+      - name: Avvia il Tunnel Cloudflare per la GUI
         run: |
-          echo "Configurazione del tunnel grafico con Pagekite..."
+          echo "Installazione di Cloudflare Tunnel in corso..."
+          export HOMEBREW_NO_ENV_HINTS=1
+          brew install cloudflared --quiet
           
-          # Scarica lo script ufficiale standalone di pagekite
-          curl -s https://pagekite.net -o pagekite.py
-          chmod +x pagekite.py
-          
-          # Genera un nome casuale e univoco per il tuo link di rete
-          RANDOM_NAME="mac-gui-$(openssl rand -hex 4)"
+          echo "Avvio del tunnel grafico sulla porta VNC (5900)..."
+          # Avvia il tunnel sulla porta ufficiale dello schermo del Mac e salva il link nei log
+          cloudflared tunnel --url tcp://localhost:5900 > /tmp/cf.log 2>&1 &
+          sleep 8
           
           echo "=================================================="
           echo "DATI PER IL TUO CLIENT VNC (Es: RealVNC o Condivisione Schermo):"
-          echo "Indirizzo a cui connettersi: ${RANDOM_NAME}.pagekite.me"
+          # Estrae l'indirizzo dinamico assegnato da Cloudflare (.trycloudflare.com)
+          grep -o 'trycloudflare.com:[0-9]*' /tmp/cf.log || echo "Generazione link in corso, controlla sotto..."
           echo "=================================================="
           
-          # Avvia il tunnel sulla porta nativa dello schermo del Mac (5900)
-          # Accetta automaticamente i termini d'uso del servizio gratuito temporaneo
-          python3 pagekite.py --clean 5900 ${RANDOM_NAME}.pagekite.me --defaults > /dev/null &
-          sleep 8
+          # Mostra l'intero output di cloudflared per sicurezza se il grep non trova subito la stringa
+          cat /tmp/cf.log | grep -i "inf"
+          echo "=================================================="
           
-          # Mantiene attivo il workflow per permetterti l'utilizzo visivo
+          # Ciclo infinito per mantenere stabile il Mac virtuale
           while true; do
             sleep 10
           done
