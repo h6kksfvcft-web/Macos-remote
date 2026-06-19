@@ -1,7 +1,7 @@
 name: GUI macOS 26 per iPhone Definitivo
 
 on: 
-  workflow_dispatch: # Avvio manuale con un clic
+  workflow_dispatch: # Avvio manuale con un clic da GitHub Actions
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -11,10 +11,11 @@ jobs:
     runs-on: macos-26
 
     steps:
+      # 1. Clona il tuo repository sul server
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Attiva lo schermo e imposta la password (Nativo Apple)
+      # 2. Configura lo schermo virtuale e imposta la password d'accesso nativa
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -25,33 +26,22 @@ jobs:
           # Imposta la chiave d'accesso per il servizio Condivisione Schermo Apple
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Forza l'attivazione immediata del server grafico del Mac
+          # Forza l'attivazione immediata del server grafico nativo del Mac
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Crea il tunnel remoto usando solo comandi SSH nativi di sistema
+      # 3. Crea il tunnel remoto tramite comandi di sistema stabili
       - name: Avvia il Tunnel per iPhone
         run: |
           echo "Generazione chiavi SSH di sistema..."
           ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
-          echo "Avvio del tunnel grafico sicuro..."
-          # Inoltra la porta 5900 dello schermo del Mac su un server SSH pubblico sicuro
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R 5900:localhost:5900 tcp.localhost.run > /tmp/tunnel.log 2>&1 &
-          
-          # Attende che il server assegni l'indirizzo di rete
-          sleep 8
+          # Genera un nome unico casuale per l'indirizzo internet del tuo Mac
+          TUNNEL_NAME="macgui-$(openssl rand -hex 4)"
           
           echo "=================================================="
           echo "INDIRIZZO DA INSERIRE NELL'APP VNC DEL TUO IPHONE:"
-          # Estrae l'indirizzo e la porta generati dal server
-          grep -o 'tcp.localhost.run:[0-9]*' /tmp/tunnel.log || echo "Generazione in corso, controlla l'output sotto..."
+          echo "${TUNNEL_NAME}.serveo.net"
           echo "=================================================="
           
-          # Stampa i log per mostrarti l'indirizzo numerico in chiaro
-          cat /tmp/tunnel.log
-          echo "=================================================="
-          
-          # Blocca stabilmente il workflow per non far spegnere il Mac
-          while true; do
-            sleep 10
-          done
+          # Avvia il tunnel inoltrando la porta video 5900 del Mac sul server pubblico
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R ${TUNNEL_NAME}:5900:localhost:5900 serveo.net
