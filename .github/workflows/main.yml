@@ -1,4 +1,4 @@
-name: Interfaccia Grafica macOS 26 Interattiva
+name: Interfaccia Grafica macOS 26 Funzionante
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
@@ -14,15 +14,14 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Installa i server grafici e gli strumenti web necessari
-      - name: Installa Server Grafico e Strumenti
+      # 1. Installa TigerVNC e l'interfaccia web noVNC
+      - name: Installa Server Grafico
         run: |
           export HOMEBREW_NO_ENV_HINTS=1
-          brew install tigervnc node tmate --quiet
-          # Installa noVNC globalmente tramite npm per avere l'interfaccia web
+          brew install tigervnc node --quiet
           npm install -g novnc --quiet
 
-      # 2. Configura lo schermo virtuale e la password
+      # 2. Configura e avvia lo schermo usando i percorsi assoluti corretti (Risolve Errore 127)
       - name: Inizializza Ambiente Grafico
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -30,35 +29,37 @@ jobs:
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Salva la password nel sistema grafico
+          # Crea la cartella di configurazione grafica
           mkdir -p ~/.vnc
-          echo "$DYNAMIC_PASS" | vncpasswd -f > ~/.vnc/passwd
+          
+          # Usa il percorso assoluto di TigerVNC per creare la password (Risolve Errore 127)
+          echo "$DYNAMIC_PASS" | /opt/homebrew/opt/tigervnc/bin/vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
-          # Avvia lo schermo virtuale (Display :1, risoluzione HD)
-          vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
+          # Avvia lo schermo virtuale indipendente (Display :1)
+          /opt/homebrew/opt/tigervnc/bin/vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
           
-          # Avvia il server noVNC che converte lo schermo in una pagina web (Porta 6080)
+          # Converte lo schermo in una pagina web interattiva sulla porta 6080
           novnc --vnc localhost:5901 --listen 6080 &
 
-      # 3. Avvia il tunnel tmate inoltrando la porta della pagina web grafica
-      - name: Avvia il Tunnel per la GUI
+      # 3. Crea il link web immediato ed evita la chiusura del server
+      - name: Avvia il Link Web per la GUI
         run: |
-          ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
+          echo "Generazione del link di accesso visivo in corso..."
+          # Scarica il gestore di tunnel rapido per la porta web grafica
+          curl -sL https://equinox.io -o ngrok.zip
+          unzip -q ngrok.zip
           
-          # Avvia il tunnel tmate
-          tmate -S /tmp/tmate.sock new-session -d
-          tmate -S /tmp/tmate.sock wait tmate-ready
+          # Avvia il tunnel sulla porta dell'interfaccia web
+          ./ngrok http 6080 --log=stdout > /dev/null &
+          sleep 5
           
           echo "=================================================="
-          echo "1. APRI IL LINK WEB DI TMATE SOTTOSTANTE"
-          echo "2. NEL TERMINALE CHE SI APRE, DIGITA QUESTO COMANDO:"
-          echo "   curl -s localhost:6080"
-          echo "=================================================="
-          tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
+          echo "CLICCA SUL LINK SOTTOSTANTE PER VEDERE IL MAC:"
+          curl -s http://localhost:4040/api/tunnels | grep -o 'https://[^"]*ngrok-free.app' || echo "Riprova tra pochi secondi..."
           echo "=================================================="
           
-          # Mantiene il server online per permetterti di usarlo
-          while [ -f /tmp/tmate.sock ]; do
+          # Mantiene la macchina virtuale attiva per farti usare la grafica
+          while true; do
             sleep 10
           done
