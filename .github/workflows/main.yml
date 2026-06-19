@@ -1,7 +1,7 @@
-name: Interfaccia Grafica macOS 26 Funzionante
+name: GUI macOS 26 per iPhone
 
 on: 
-  workflow_dispatch: # Avvio manuale con un clic
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -28,29 +28,42 @@ jobs:
           # Attiva la Condivisione Schermo ufficiale nativa di macOS Tahoe
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Installa cloudflared tramite Homebrew per generare il link pubblico senza account
-      - name: Avvia il Tunnel Cloudflare per la GUI
+      # 2. Configura ed esegue il proxy frp per iPhone
+      - name: Avvia il Tunnel per iPhone
         run: |
-          echo "Installazione di Cloudflare Tunnel in corso..."
-          export HOMEBREW_NO_ENV_HINTS=1
-          brew install cloudflared --quiet
+          echo "Configurazione del tunnel grafico ad alta velocità..."
           
-          echo "Avvio del tunnel grafico sulla porta VNC (5900)..."
-          # Avvia il tunnel sulla porta ufficiale dello schermo del Mac e salva il link nei log
-          cloudflared tunnel --url tcp://localhost:5900 > /tmp/cf.log 2>&1 &
-          sleep 8
+          # Scarica il client frp ufficiale per l'architettura Apple Silicon (ARM64)
+          curl -sL https://github.com -o frp.tar.gz
+          tar -xzf frp.tar.gz
+          cd frp_0.54.0_darwin_arm64
+          
+          # Genera una porta casuale sul server pubblico per evitare conflitti (tra 10000 e 50000)
+          REMOTE_PORT=$((10000 + RANDOM % 40000))
+          
+          # Crea il file di configurazione per il proxy grafico TCP
+          cat <<EOF > frpc.toml
+          serverAddr = "freefrp.net"
+          serverPort = 7000
+
+          [[proxies]]
+          name = "macos-remote-$(openssl rand -hex 3)"
+          type = "tcp"
+          localIp = "127.0.0.1"
+          localPort = 5900
+          remotePort = $REMOTE_PORT
+          EOF
           
           echo "=================================================="
-          echo "DATI PER IL TUO CLIENT VNC (Es: RealVNC o Condivisione Schermo):"
-          # Estrae l'indirizzo dinamico assegnato da Cloudflare (.trycloudflare.com)
-          grep -o 'trycloudflare.com:[0-9]*' /tmp/cf.log || echo "Generazione link in corso, controlla sotto..."
+          echo "INDIRIZZO DA INSERIRE NELL'APP VNC DEL TUO IPHONE:"
+          echo "freefrp.net:$REMOTE_PORT"
           echo "=================================================="
           
-          # Mostra l'intero output di cloudflared per sicurezza se il grep non trova subito la stringa
-          cat /tmp/cf.log | grep -i "inf"
-          echo "=================================================="
+          # Avvia il tunnel in background
+          ./frpc -c frpc.toml &
+          sleep 5
           
-          # Ciclo infinito per mantenere stabile il Mac virtuale
+          # Ciclo infinito per impedire la chiusura della macchina
           while true; do
             sleep 10
           done
