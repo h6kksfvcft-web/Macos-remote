@@ -1,7 +1,7 @@
-name: Interfaccia Grafica macOS 26 Infallibile
+name: GUI macOS 26 Infallibile
 
 on: 
-  workflow_dispatch: # Avvio manuale con un clic
+  workflow_dispatch:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -14,21 +14,17 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Configura la password grafica usando solo i comandi interni Apple di sistema
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
-          echo "=================================================="
-          echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
-          echo "=================================================="
           
-          # Imposta la chiave d'accesso per il modulo di Condivisione Schermo ufficiale nativo Apple
+          # Scrive la password direttamente nella pagina di riepilogo principale di GitHub
+          echo "# 🔐 LA TUA PASSWORD GRAFICA: $DYNAMIC_PASS" >> $GITHUB_STEP_SUMMARY
+          echo "Username da usare: runner" >> $GITHUB_STEP_SUMMARY
+          
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
-          
-          # Attiva il server della Condivisione Schermo ufficiale nativa di macOS Tahoe
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 2. Avvia il tunnel ufficiale e blindato che gestisce in automatico lo schermo senza Homebrew
       - name: Avvia il Tunnel per la GUI
         uses: mxschmitt/action-tmate@v3
         with:
