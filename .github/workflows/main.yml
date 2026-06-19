@@ -1,38 +1,64 @@
-name: Terminale macOS 26 Stabile
+name: Interfaccia Grafica macOS 26 Interattiva
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
 
 env:
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: "true"
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
 jobs:
-  interfaccia-remota:
-    runs-on: macos-26 # Gira nativamente su Apple Silicon ARM64
+  gui-mac:
+    runs-on: macos-26
 
     steps:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # Installa direttamente il gestore di tunnel ufficiale
-      - name: Configura e Avvia Terminale Remoto
+      # 1. Installa i server grafici e gli strumenti web necessari
+      - name: Installa Server Grafico e Strumenti
         run: |
           export HOMEBREW_NO_ENV_HINTS=1
-          brew install tmate --quiet
+          brew install tigervnc node tmate --quiet
+          # Installa noVNC globalmente tramite npm per avere l'interfaccia web
+          npm install -g novnc --quiet
+
+      # 2. Configura lo schermo virtuale e la password
+      - name: Inizializza Ambiente Grafico
+        run: |
+          DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
+          echo "=================================================="
+          echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
+          echo "=================================================="
           
-          # Configura la chiave SSH temporanea richiesta per agganciare il server
+          # Salva la password nel sistema grafico
+          mkdir -p ~/.vnc
+          echo "$DYNAMIC_PASS" | vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
+          
+          # Avvia lo schermo virtuale (Display :1, risoluzione HD)
+          vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
+          
+          # Avvia il server noVNC che converte lo schermo in una pagina web (Porta 6080)
+          novnc --vnc localhost:5901 --listen 6080 &
+
+      # 3. Avvia il tunnel tmate inoltrando la porta della pagina web grafica
+      - name: Avvia il Tunnel per la GUI
+        run: |
           ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
-          # Inizializza la sessione remota tmate
+          # Avvia il tunnel tmate
           tmate -S /tmp/tmate.sock new-session -d
           tmate -S /tmp/tmate.sock wait tmate-ready
           
           echo "=================================================="
-          echo "CLICCA SUL LINK SOTTOSTANTE PER ENTRARE NEL MAC:"
+          echo "1. APRI IL LINK WEB DI TMATE SOTTOSTANTE"
+          echo "2. NEL TERMINALE CHE SI APRE, DIGITA QUESTO COMANDO:"
+          echo "   curl -s localhost:6080"
+          echo "=================================================="
           tmate -S /tmp/tmate.sock display -p '#{tmate_web}'
           echo "=================================================="
           
-          # Ciclo di controllo anti-chiusura: mantiene il runner attivo per te
+          # Mantiene il server online per permetterti di usarlo
           while [ -f /tmp/tmate.sock ]; do
             sleep 10
           done
