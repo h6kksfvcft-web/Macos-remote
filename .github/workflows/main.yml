@@ -1,7 +1,7 @@
 name: GUI macOS 26 per iPhone Definitivo
 
 on: 
-  workflow_dispatch: # Avvio manuale con un clic da GitHub Actions
+  workflow_dispatch: # Avvio manuale con un clic
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -11,11 +11,10 @@ jobs:
     runs-on: macos-26
 
     steps:
-      # 1. Clona il tuo repository sul server
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 2. Configura lo schermo virtuale e imposta la password d'accesso nativa
+      # 1. Attiva lo schermo e imposta la password (Nativo Apple)
       - name: Configura Password di Accesso
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
@@ -26,22 +25,32 @@ jobs:
           # Imposta la chiave d'accesso per il servizio Condivisione Schermo Apple
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
           
-          # Forza l'attivazione immediata del server grafico nativo del Mac
+          # Forza l'attivazione immediata del server grafico del Mac
           sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
-      # 3. Crea il tunnel remoto tramite comandi di sistema stabili
+      # 2. Crea il tunnel remoto indistruttibile con Telebit (Zero blocchi, zero contratti)
       - name: Avvia il Tunnel per iPhone
         run: |
-          echo "Generazione chiavi SSH di sistema..."
-          ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
+          echo "Installazione del modulo di rete Telebit..."
+          # Scarica ed esegue l'installatore ufficiale standalone per il Mac
+          curl -s https://telebit.io | bash > /dev/null 2>&1 || true
           
-          # Genera un nome unico casuale per l'indirizzo internet del tuo Mac
-          TUNNEL_NAME="macgui-$(openssl rand -hex 4)"
+          echo "Configurazione del link di inoltro TCP..."
+          # Configura telebit per ascoltare la porta dello schermo VNC (5900)
+          ~/telebit http 5900 > /tmp/telebit.log 2>&1 &
+          sleep 8
           
           echo "=================================================="
           echo "INDIRIZZO DA INSERIRE NELL'APP VNC DEL TUO IPHONE:"
-          echo "${TUNNEL_NAME}.serveo.net"
+          # Estrae l'indirizzo pubblico assegnato gratuitamente (.telebit.io)
+          grep -o '[a-z0-9]*\.telebit\.io' /tmp/telebit.log || echo "Generazione in corso, controlla l'output sotto..."
           echo "=================================================="
           
-          # Avvia il tunnel inoltrando la porta video 5900 del Mac sul server pubblico
-          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R ${TUNNEL_NAME}:5900:localhost:5900 serveo.net
+          # Stampa i dettagli completi sul terminale di GitHub
+          cat /tmp/telebit.log
+          echo "=================================================="
+          
+          # Mantiene il server online senza limiti di tempo
+          while true; do
+            sleep 10
+          done
