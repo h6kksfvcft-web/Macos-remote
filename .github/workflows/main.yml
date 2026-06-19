@@ -1,4 +1,4 @@
-name: GUI macOS 26 Infallibile e Definitiva
+name: Interfaccia Grafica macOS 26 per iPhone
 
 on: 
   workflow_dispatch: # Avvio manuale con un clic
@@ -14,41 +14,44 @@ jobs:
       - name: Checkout del codice
         uses: actions/checkout@v4.2.2
 
-      # 1. Attiva lo schermo del Mac e configura le credenziali (Nativo Apple)
-      - name: Configura Password di Accesso
+      # 1. Installa i pacchetti grafici ufficiali di Homebrew senza scaricare file esterni dal web
+      - name: Installa Server Grafico
+        run: |
+          export HOMEBREW_NO_ENV_HINTS=1
+          brew install tigervnc node novnc --quiet
+
+      # 2. Inizializza lo schermo virtuale indipendente e la password grafica
+      - name: Configura Ambiente Grafico
         run: |
           DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
           echo "=================================================="
           echo "LA TUA PASSWORD DI ACCESSO GRAFICO È: $DYNAMIC_PASS"
           echo "=================================================="
           
-          # Imposta la chiave d'accesso per il servizio Condivisione Schermo Apple senza toccare l'utente di sistema
-          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
+          # Crea la configurazione della password per TigerVNC usando il percorso corretto di Homebrew
+          mkdir -p ~/.vnc
+          echo "$DYNAMIC_PASS" | /opt/homebrew/opt/tigervnc/bin/vncpasswd -f > ~/.vnc/passwd
+          chmod 600 ~/.vnc/passwd
           
-          # Attiva il server grafico ufficiale integrato in macOS Tahoe
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          # Avvia lo schermo virtuale in background (Risoluzione ottimizzata per lo schermo dell'iPhone)
+          /opt/homebrew/opt/tigervnc/bin/vncserver :1 -geometry 1024x768 -depth 24 -rfbauth ~/.vnc/passwd
+          
+          # Avvia il server noVNC che converte il segnale video del Mac in una pagina internet (sulla porta 6080)
+          /opt/homebrew/opt/novnc/bin/novnc_proxy --vnc localhost:5901 --listen 6080 &
 
-      # 2. Avvia il tunnel proprietario e ufficiale di GitHub (Indistruttibile)
-      - name: Attiva Connessione Tramite GitHub CLI
-        env:
-          GH_TOKEN: ${{ github.token }}
+      # 3. Inoltra la pagina web dello schermo sul web tramite canale SSH nativo (Senza account o blocchi)
+      - name: Avvia il Tunnel per iPhone
         run: |
-          echo "Inizializzazione del tunnel ufficiale GitHub in corso..."
+          echo "Generazione chiavi SSH di sistema..."
+          ssh-keygen -t rsa -f ~/.ssh/id_rsa -q -N ""
           
-          # Estrae in automatico il codice identificativo univoco del server corrente
-          RUNNER_NAME=$(hostname)
+          # Genera un nome unico casuale per l'indirizzo internet del tuo Mac
+          TUNNEL_NAME="maciphone-$(openssl rand -hex 4)"
           
           echo "=================================================="
-          echo "IL MAC È PRONTO! SEGUI QUESTO PASSAGGIO SUL TUO IPHONE:"
-          echo "1. Apri l'applicazione 'Termius' (o un client SSH gratuito) su iPhone."
-          echo "2. Crea una connessione verso questo indirizzo web ufficiale:"
-          echo "   $RUNNER_://githubusercontent.com"
+          echo "COPIA E APRI QUESTO LINK SU SAFARI/CHROME DEL TUO IPHONE:"
+          echo "https://${TUNNEL_NAME}.serveo.net/vnc.html"
           echo "=================================================="
           
-          # Avvia l'inoltro di rete ufficiale protetto dai server GitHub sulla porta video 5900
-          gh run watch ${{ github.run_id }} --exit-status > /dev/null 2>&1 &
-          
-          # Loop di controllo infinito stabile: impedisce la chiusura automatica del workflow
-          while true; do
-            sleep 10
-          done
+          # Avvia il tunnel inoltrando la porta web 6080. In modalità HTTP non compare la pagina di billing!
+          ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -R ${TUNNEL_NAME}:80:localhost:6080 serveo.net
