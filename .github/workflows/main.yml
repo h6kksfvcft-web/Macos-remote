@@ -159,7 +159,50 @@ jobs:
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate || true
 
       # ---------------------------------------------------------------
-      # STEP 5 - Installazione Tailscale (modalità headless / userspace)
+      # STEP 4b - Installazione AnyDesk (alternativa a VNC, più rapida)
+      #
+      #   AnyDesk gestisce meglio i NAT/firewall e funziona benissimo
+      #   con l'app iOS. Configurazione headless:
+      #     - Install via Homebrew Cask
+      #     - Avvio del servizio in background
+      #     - Impostazione password fissa per accesso non interattivo
+      #     - Recupero dell'AnyDesk ID per connettersi
+      # ---------------------------------------------------------------
+      - name: Install AnyDesk (alternative remote desktop)
+        continue-on-error: true
+        run: |
+          set +x
+          echo "[+] Installazione AnyDesk via Homebrew Cask..."
+          brew install --cask anydesk
+
+          echo "[+] Avvio del servizio AnyDesk..."
+          # Lancia AnyDesk in background
+          open -ga AnyDesk || true
+          sleep 5
+
+          echo "[+] Imposto password AnyDesk per accesso non interattivo..."
+          # Imposta password per accesso senza approvazione manuale
+          echo "${RUNNER_PASSWORD}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
+
+          # Riavvia AnyDesk per applicare la password
+          sudo pkill -f AnyDesk 2>/dev/null || true
+          sleep 2
+          open -ga AnyDesk
+          sleep 8
+
+          echo "[+] Recupero AnyDesk ID..."
+          ANYDESK_ID=$(/Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id 2>/dev/null || echo "")
+          if [ -z "$ANYDESK_ID" ]; then
+            # Fallback: leggi dal file di configurazione
+            ANYDESK_ID=$(grep -h "ad.anynet.id" ~/.anydesk/*.conf /var/root/.anydesk/*.conf 2>/dev/null | head -n1 | cut -d= -f2 || echo "")
+          fi
+
+          echo "================================================================"
+          echo "  AnyDesk pronto!"
+          echo "----------------------------------------------------------------"
+          echo "  AnyDesk ID  : ${ANYDESK_ID:-<vedi log AnyDesk per ID>}"
+          echo "  Password    : ${RUNNER_PASSWORD}"
+          echo "================================================================"
       #
       #   Sui runner macOS GitHub-hosted NON è disponibile l'app GUI di
       #   Tailscale, quindi installiamo il pacchetto 'tailscaled' open
