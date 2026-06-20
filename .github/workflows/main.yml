@@ -78,11 +78,37 @@ jobs:
       #   mai stampata in chiaro nei log (set +x).
       # ---------------------------------------------------------------
       - name: Configure password for 'runner' user
+        continue-on-error: true   # Non bloccante: VNC usa la propria password (vncpw)
         run: |
           set +x
-          echo "[+] Impostazione password per l'utente 'runner' tramite dscl..."
-          sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}"
-          echo "[+] Password aggiornata correttamente (valore non mostrato)."
+          echo "[+] Impostazione password per l'utente 'runner'..."
+
+          # Strategia 1: sysadminctl (metodo ufficiale Apple, funziona anche se
+          # il runner è admin senza conoscere la vecchia password).
+          if sudo sysadminctl -resetPasswordFor runner \
+                -newPassword "${RUNNER_PASSWORD}" \
+                -adminUser runner \
+                -adminPassword "" 2>/dev/null; then
+            echo "[+] Password aggiornata con sysadminctl."
+            exit 0
+          fi
+
+          # Strategia 2: rimuovere AuthenticationAuthority e Password, poi
+          # impostare la nuova password (necessario su macOS Sequoia dove
+          # 'dscl . -passwd' richiede la vecchia password anche come root).
+          echo "[..] sysadminctl fallito, provo via dscl con reset auth..."
+          sudo dscl . -delete /Users/runner AuthenticationAuthority 2>/dev/null || true
+          sudo dscl . -delete /Users/runner Password 2>/dev/null || true
+          if sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}"; then
+            echo "[+] Password aggiornata con dscl."
+            exit 0
+          fi
+
+          # Strategia 3: fallback "vecchia password vuota".
+          echo "[..] provo dscl con old-password vuota..."
+          sudo dscl . -passwd /Users/runner "" "${RUNNER_PASSWORD}" || {
+            echo "::warning::Impossibile cambiare la password dell'utente runner. VNC funzionerà comunque tramite la sua password dedicata impostata via kickstart."
+          }
 
       # ---------------------------------------------------------------
       # STEP 4 - Abilitazione Screen Sharing (VNC) nativo di macOS
