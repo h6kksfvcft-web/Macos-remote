@@ -242,8 +242,8 @@ jobs:
           sleep 5  # extra wait per la registrazione sul server relay
 
           echo "[+] Imposto password RustDesk per accesso non interattivo..."
-          /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
           sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
+          /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
           echo "[..] Impostazione password fallita - verrà gestita dal config file"
 
           echo "[+] Recupero RustDesk ID..."
@@ -300,24 +300,43 @@ jobs:
       # ---------------------------------------------------------------
       - name: Setup self-hosted RustDesk relay (hbbs + hbbr)
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set +x
           echo "[+] Recupero ultima versione rustdesk-server..."
-          LATEST=$(curl -fsSL https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest \
+          # Uso GITHUB_TOKEN per evitare il rate-limit dell'API pubblica
+          LATEST=$(curl -fsSL \
+                    -H "Authorization: Bearer ${GH_TOKEN}" \
+                    -H "Accept: application/vnd.github+json" \
+                    https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest \
                     | grep '"tag_name"' | head -n1 | cut -d'"' -f4)
-          echo "[+] Versione: ${LATEST}"
 
-          echo "[+] Download binari rustdesk-server per macOS (via Rosetta 2 su M1)..."
+          # Fallback se l'API è ancora rate-limited
+          if [ -z "$LATEST" ]; then
+            LATEST="1.1.14"
+            echo "[!] API non raggiungibile, uso versione di fallback: $LATEST"
+          else
+            echo "[+] Versione trovata: $LATEST"
+          fi
+
+          echo "[+] Download binari rustdesk-server per macOS..."
           cd /tmp
-          curl -fsSL -o rustdesk-server.zip \
-            "https://github.com/rustdesk/rustdesk-server/releases/download/${LATEST}/rustdesk-server-osx.zip"
+          DL_URL="https://github.com/rustdesk/rustdesk-server/releases/download/${LATEST}/rustdesk-server-osx.zip"
+          if ! curl -fsSL -o rustdesk-server.zip "$DL_URL"; then
+            echo "[!] Download fallito da $DL_URL, provo versione fallback 1.1.14..."
+            LATEST="1.1.14"
+            DL_URL="https://github.com/rustdesk/rustdesk-server/releases/download/${LATEST}/rustdesk-server-osx.zip"
+            curl -fsSL -o rustdesk-server.zip "$DL_URL"
+          fi
+
           rm -rf rustdesk-server-bin
           unzip -q -o rustdesk-server.zip -d rustdesk-server-bin/
-          chmod +x rustdesk-server-bin/hbbs rustdesk-server-bin/hbbr 2>/dev/null || true
 
-          # Trova i binari (la struttura del .zip può variare)
+          # Trova i binari (la struttura del .zip può variare per versione)
           HBBS_BIN=$(find /tmp/rustdesk-server-bin -name hbbs -type f | head -n1)
           HBBR_BIN=$(find /tmp/rustdesk-server-bin -name hbbr -type f | head -n1)
+          chmod +x "$HBBS_BIN" "$HBBR_BIN" 2>/dev/null || true
           echo "[+] hbbs: ${HBBS_BIN}"
           echo "[+] hbbr: ${HBBR_BIN}"
 
@@ -336,10 +355,17 @@ jobs:
           echo "[+] Attesa generazione public key..."
           PUB_KEY=""
           for i in {1..20}; do
-            if [ -f /tmp/rustdesk-data/id_ed25519.pub ]; then
-              PUB_KEY=$(cat /tmp/rustdesk-data/id_ed25519.pub)
-              break
-            fi
+            # La key viene generata in /tmp/rustdesk-data oppure nella home di root
+            for KEY_PATH in \
+              /tmp/rustdesk-data/id_ed25519.pub \
+              /var/root/id_ed25519.pub \
+              ~/id_ed25519.pub; do
+              if sudo test -f "$KEY_PATH"; then
+                PUB_KEY=$(sudo cat "$KEY_PATH")
+                echo "[+] Public key trovata in: $KEY_PATH"
+                break 2
+              fi
+            done
             sleep 1
           done
 
@@ -351,7 +377,6 @@ jobs:
           sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -E '21115|21116|21117|21118|21119' || true
 
           echo "[+] Riconfiguro client RustDesk locale per usare il server self-hosted..."
-          # Stop RustDesk
           sudo pkill -f RustDesk 2>/dev/null || true
           sleep 2
 
@@ -379,8 +404,9 @@ jobs:
           open -a /Applications/RustDesk.app
           sleep 8
 
-          # Imposto nuovamente la password (il restart può resettarla)
-          /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || true
+          # Imposto nuovamente la password (con sudo, ora che sappiamo che serve)
+          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
+            echo "[..] Password set fallito - sarà richiesta conferma manuale"
 
           # Recupera il NUOVO RustDesk ID (ora generato dal server locale)
           NEW_ID=""
@@ -416,10 +442,10 @@ jobs:
           echo "================================================================"
           echo ""
           echo "[debug] hbbs log (ultime 20 righe):"
-          tail -n 20 /tmp/hbbs.log 2>/dev/null || true
+          sudo tail -n 20 /tmp/hbbs.log 2>/dev/null || true
           echo ""
           echo "[debug] hbbr log (ultime 20 righe):"
-          tail -n 20 /tmp/hbbr.log 2>/dev/null || true
+          sudo tail -n 20 /tmp/hbbr.log 2>/dev/null || true
       #
       #   Sui runner macOS GitHub-hosted NON è disponibile l'app GUI di
       #   Tailscale, quindi installiamo il pacchetto 'tailscaled' open
