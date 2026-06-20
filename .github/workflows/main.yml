@@ -159,6 +159,47 @@ jobs:
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate || true
 
       # ---------------------------------------------------------------
+      # STEP 4a - Ottimizzazioni performance per accesso remoto
+      #
+      #   Riduce il carico grafico della VM per minimizzare la quantità
+      #   di dati che VNC/AnyDesk devono trasmettere ad ogni frame.
+      #   Effetto pratico: connessione molto più fluida da iPad/4G.
+      # ---------------------------------------------------------------
+      - name: Optimize macOS for remote desktop performance
+        continue-on-error: true
+        run: |
+          set +x
+          echo "[+] Disabilito animazioni Dock e finestre..."
+          defaults write com.apple.dock launchanim -bool false
+          defaults write com.apple.dock expose-animation-duration -float 0
+          defaults write com.apple.dock autohide-time-modifier -float 0
+          defaults write com.apple.dock autohide-delay -float 0
+          defaults write NSGlobalDomain NSWindowResizeTime -float 0.001
+          defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
+          defaults write NSGlobalDomain NSScrollAnimationEnabled -bool false
+          defaults write -g QLPanelAnimationDuration -float 0
+          defaults write com.apple.finder DisableAllAnimations -bool true
+
+          echo "[+] Riduco effetti grafici (trasparenze, ombre, motion)..."
+          defaults write com.apple.universalaccess reduceTransparency -bool true
+          defaults write com.apple.universalaccess reduceMotion -bool true
+
+          echo "[+] Imposto sfondo nero a tinta unita (zero dati da trasmettere)..."
+          osascript -e 'tell application "System Events" to tell every desktop to set picture to ""' 2>/dev/null || true
+
+          echo "[+] Disabilito Spotlight indexing (libera CPU)..."
+          sudo mdutil -a -i off 2>/dev/null || true
+
+          echo "[+] Disabilito Time Machine snapshot automatici..."
+          sudo tmutil disable 2>/dev/null || true
+
+          echo "[+] Riavvio Dock e Finder per applicare modifiche..."
+          killall Dock 2>/dev/null || true
+          killall Finder 2>/dev/null || true
+
+          echo "[+] Ottimizzazioni applicate."
+
+      # ---------------------------------------------------------------
       # STEP 4b - Installazione AnyDesk (alternativa a VNC, più rapida)
       #
       #   AnyDesk gestisce meglio i NAT/firewall e funziona benissimo
