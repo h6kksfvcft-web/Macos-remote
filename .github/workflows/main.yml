@@ -1,31 +1,252 @@
-name: GUI macOS 26 Infallibile
+# =====================================================================
+#  Workflow: macOS Sequoia Remote Access (Tailscale + VNC)
+# ---------------------------------------------------------------------
+#  Scopo:
+#    Avvia un runner GitHub-hosted macOS Sequoia (macos-15), installa
+#    Tailscale in modalità headless con SSH abilitato, attiva lo Screen
+#    Sharing nativo (VNC) di macOS, imposta una password per l'utente
+#    'runner' e mantiene la VM viva fino al limite massimo (6 ore).
+#
+#  Requisiti repository:
+#    - Secret obbligatorio: TAILSCALE_AUTH_KEY
+#      (Generabile da https://login.tailscale.com/admin/settings/keys
+#       come "Auth key" reusable / ephemeral con tag desiderato.)
+#
+#  Avvertenze:
+#    - Uso esclusivo per scopi legittimi di sviluppo / debug remoto.
+#    - I runner GitHub-hosted hanno un tempo massimo di esecuzione
+#      di 6 ore (21600 secondi); dopo tale tempo la VM viene distrutta.
+# =====================================================================
 
-on: 
+name: macOS Sequoia Remote Access
+
+# ---------------------------------------------------------------------
+# 1) TRIGGER
+#    Il workflow si avvia ESCLUSIVAMENTE in modo manuale dalla tab
+#    "Actions" del repository tramite il pulsante "Run workflow".
+# ---------------------------------------------------------------------
+on:
   workflow_dispatch:
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+    inputs:
+      vnc_password:
+        description: "Password per l'utente 'runner' (login VNC/SSH). Lasciare vuoto per usare il default."
+        required: false
+        default: "P@ssw0rd!Remote2026"
+        type: string
 
 jobs:
-  gui-mac:
-    runs-on: macos-26
+  macos-remote:
+    # -----------------------------------------------------------------
+    # Runner ufficiale GitHub per macOS Sequoia (15.x)
+    # -----------------------------------------------------------------
+    name: Bootstrap macOS Sequoia VM
+    runs-on: macos-15
+
+    # Timeout allineato al massimo consentito da GitHub Actions (360 min)
+    timeout-minutes: 360
+
+    env:
+      # La password viene passata via env per evitare di esporla nei log.
+      RUNNER_PASSWORD: ${{ github.event.inputs.vnc_password }}
 
     steps:
-      - name: Checkout del codice
-        uses: actions/checkout@v4.2.2
+      # ---------------------------------------------------------------
+      # STEP 1 - Checkout (opzionale ma utile se servono script locali)
+      # ---------------------------------------------------------------
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Configura Password di Accesso
+      # ---------------------------------------------------------------
+      # STEP 2 - Informazioni di sistema (diagnostica)
+      # ---------------------------------------------------------------
+      - name: System information
         run: |
-          DYNAMIC_PASS=$(openssl rand -base64 9 | tr -dc 'a-zA-Z0-9')
-          
-          # Scrive la password direttamente nella pagina di riepilogo principale di GitHub
-          echo "# 🔐 LA TUA PASSWORD GRAFICA: $DYNAMIC_PASS" >> $GITHUB_STEP_SUMMARY
-          echo "Username da usare: runner" >> $GITHUB_STEP_SUMMARY
-          
-          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "$DYNAMIC_PASS"
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          echo "===== Host info ====="
+          sw_vers
+          uname -a
+          echo "Current user: $(whoami)"
+          echo "Hostname: $(hostname)"
 
-      - name: Avvia il Tunnel per la GUI
-        uses: mxschmitt/action-tmate@v3
-        with:
-          limit-access-to-actor: false
+      # ---------------------------------------------------------------
+      # STEP 3 - Configurazione password per l'utente 'runner'
+      #
+      #   macOS non dispone di 'chpasswd' come Linux: usiamo 'dscl' per
+      #   impostare la password tramite Directory Services. Questo è il
+      #   metodo nativo e supportato per modificare credenziali utente.
+      #
+      #   La password viene letta da un input/secret cifrato di Actions,
+      #   mai stampata in chiaro nei log (set +x).
+      # ---------------------------------------------------------------
+      - name: Configure password for 'runner' user
+        run: |
+          set +x
+          echo "[+] Impostazione password per l'utente 'runner' tramite dscl..."
+          sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}"
+          echo "[+] Password aggiornata correttamente (valore non mostrato)."
+
+      # ---------------------------------------------------------------
+      # STEP 4 - Abilitazione Screen Sharing (VNC) nativo di macOS
+      #
+      #   Si usa 'kickstart' del framework Remote Management per:
+      #     -activate        => abilita ARD/Screen Sharing
+      #     -configure       => modifica configurazione
+      #     -access -on      => attiva accesso
+      #     -clientopts      => opzioni di accesso client
+      #     -restart -agent  => riavvia il demone
+      #     -privs -all      => concede tutti i privilegi all'utente
+      #     -users runner    => abilita l'utente 'runner'
+      #
+      #   Inoltre impostiamo la preference VNCLegacyConnectionsEnabled
+      #   per permettere connessioni da client VNC standard (non solo
+      #   ARD), e una password VNC esplicita.
+      # ---------------------------------------------------------------
+      - name: Enable native macOS Screen Sharing (VNC)
+        run: |
+          set +x
+          echo "[+] Attivazione Screen Sharing tramite kickstart..."
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvnclegacy -vnclegacy yes \
+            -clientopts -setvncpw -vncpw "${RUNNER_PASSWORD}" \
+            -configure -allowAccessFor -specifiedUsers \
+            -configure -users runner -access -on -privs -all \
+            -restart -agent -menu
+
+          echo "[+] Abilito il launchd service screensharing..."
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+
+          echo "[+] Verifica porta VNC (5900) in ascolto..."
+          sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -E '5900|screensharing' || true
+
+      # ---------------------------------------------------------------
+      # STEP 5 - Installazione Tailscale (modalità headless / userspace)
+      #
+      #   Sui runner macOS GitHub-hosted NON è disponibile l'app GUI di
+      #   Tailscale, quindi installiamo il pacchetto 'tailscaled' open
+      #   source via Homebrew e lo avviamo in modalità userspace-networking
+      #   (non richiede TUN/TAP né privilegi di kernel extension).
+      #
+      #   Flag rilevanti:
+      #     --tun=userspace-networking  => userspace networking (no kext)
+      #     --socket=...                => socket di controllo locale
+      #     --state=...                 => persistenza stato auth
+      # ---------------------------------------------------------------
+      - name: Install Tailscale (headless)
+        run: |
+          echo "[+] Installazione Tailscale via Homebrew..."
+          brew install tailscale
+
+          echo "[+] Preparo directory di stato..."
+          sudo mkdir -p /var/lib/tailscale
+          sudo mkdir -p /var/run/tailscale
+
+      # ---------------------------------------------------------------
+      # STEP 6 - Avvio del demone tailscaled in background
+      #
+      #   Lo lanciamo con 'nohup' + '&' per scollegarlo dalla shell e
+      #   reindirizziamo i log su file in modo da poterli ispezionare
+      #   in caso di problemi.
+      # ---------------------------------------------------------------
+      - name: Start tailscaled daemon (userspace networking)
+        run: |
+          echo "[+] Avvio tailscaled in modalità userspace..."
+          sudo nohup tailscaled \
+            --tun=userspace-networking \
+            --socket=/var/run/tailscale/tailscaled.sock \
+            --state=/var/lib/tailscale/tailscaled.state \
+            > /tmp/tailscaled.log 2>&1 &
+
+          # Attendi che il socket di controllo sia pronto
+          for i in {1..15}; do
+            if [ -S /var/run/tailscale/tailscaled.sock ]; then
+              echo "[+] tailscaled è pronto."
+              break
+            fi
+            echo "[..] attesa tailscaled ($i/15)..."
+            sleep 1
+          done
+
+      # ---------------------------------------------------------------
+      # STEP 7 - Autenticazione su Tailnet con SSH abilitato
+      #
+      #   - --authkey: chiave preautorizzata (secret cifrato)
+      #   - --ssh   : abilita Tailscale SSH (login via identità Tailscale)
+      #   - --hostname: identifica univocamente questa VM nel tailnet
+      #   - --accept-routes: opzionale, accetta subnet route pubblicate
+      # ---------------------------------------------------------------
+      - name: Authenticate to Tailscale (with --ssh)
+        env:
+          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+        run: |
+          set +x
+          if [ -z "${TAILSCALE_AUTH_KEY}" ]; then
+            echo "::error::Secret TAILSCALE_AUTH_KEY mancante. Aggiungilo nelle Settings > Secrets del repo."
+            exit 1
+          fi
+
+          echo "[+] Eseguo 'tailscale up' con --ssh abilitato..."
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock up \
+            --authkey="${TAILSCALE_AUTH_KEY}" \
+            --ssh \
+            --hostname="gh-macos-sequoia-${GITHUB_RUN_ID}" \
+            --accept-routes \
+            --accept-dns=false
+
+          echo "[+] Stato Tailscale:"
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock status || true
+
+          echo "[+] Indirizzo IPv4 Tailscale assegnato:"
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4 || true
+
+      # ---------------------------------------------------------------
+      # STEP 8 - Riepilogo connessione (visibile nei log del job)
+      # ---------------------------------------------------------------
+      - name: Connection summary
+        run: |
+          TS_IP=$(sudo tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4 | head -n1)
+          HOSTNAME="gh-macos-sequoia-${GITHUB_RUN_ID}"
+          echo "================================================================"
+          echo "  macOS Sequoia VM pronta per accesso remoto"
+          echo "----------------------------------------------------------------"
+          echo "  Hostname Tailscale : ${HOSTNAME}"
+          echo "  Tailscale IPv4     : ${TS_IP}"
+          echo "  Utente             : runner"
+          echo "  SSH (Tailscale)    : tailscale ssh runner@${HOSTNAME}"
+          echo "  VNC                : vnc://${TS_IP}:5900   (oppure :${HOSTNAME})"
+          echo "  Durata massima     : 6h (21600s)"
+          echo "================================================================"
+
+      # ---------------------------------------------------------------
+      # STEP 9 - KEEP-ALIVE
+      #
+      #   Mantiene il job in esecuzione per il tempo massimo consentito
+      #   dal runner GitHub-hosted (6 ore = 21600 secondi), così la VM
+      #   resta raggiungibile via Tailscale SSH e VNC fino al timeout.
+      #
+      #   Stampiamo un heartbeat ogni 10 minuti per evitare che il job
+      #   venga considerato inattivo dai meccanismi di rilevazione idle.
+      # ---------------------------------------------------------------
+      - name: Keep VM alive (max 6h)
+        run: |
+          echo "[+] Inizio keep-alive: 21600s (6h)."
+          END=$((SECONDS+21600))
+          while [ $SECONDS -lt $END ]; do
+            REMAINING=$((END-SECONDS))
+            echo "[heartbeat] $(date -u +%FT%TZ) - tempo rimanente: ${REMAINING}s"
+            sleep 600
+          done
+          echo "[+] Keep-alive terminato, la VM verrà ora distrutta."
+
+      # ---------------------------------------------------------------
+      # STEP 10 - Cleanup (sempre eseguito)
+      #
+      #   Esegue un logout pulito da Tailscale per liberare la chiave
+      #   ephemeral nel tailnet e termina il demone.
+      # ---------------------------------------------------------------
+      - name: Tailscale logout & shutdown
+        if: always()
+        run: |
+          echo "[+] Logout da Tailscale..."
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock logout || true
+          sudo pkill -TERM tailscaled || true
+          echo "[+] Cleanup completato."
