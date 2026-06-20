@@ -248,7 +248,27 @@ jobs:
           echo "[+] Imposto password RustDesk per accesso non interattivo..."
           sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
           /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
-          echo "[..] Impostazione password fallita - sarà richiesta approvazione manuale"
+          echo "[..] CLI --password fallita - leggo password temporanea dal config"
+
+          # Estrai la password temporanea generata da RustDesk dai file di config
+          echo "[+] Cerco password temporanea generata da RustDesk..."
+          TEMP_PWD=""
+          for CFG in \
+            /Users/runner/Library/Preferences/com.carriez.RustDesk/RustDesk.toml \
+            /var/root/Library/Preferences/com.carriez.RustDesk/RustDesk.toml \
+            /Users/runner/Library/Preferences/com.carriez.RustDesk/RustDesk2.toml \
+            /var/root/Library/Preferences/com.carriez.RustDesk/RustDesk2.toml; do
+            if sudo test -f "$CFG"; then
+              echo "----- $CFG -----"
+              sudo cat "$CFG"
+              echo "---------------"
+              # La temp password è in vari formati a seconda della versione
+              FOUND=$(sudo grep -E "^(temporary-password|temp-password|password)" "$CFG" 2>/dev/null | head -n1 | cut -d= -f2- | tr -d "' \"")
+              if [ -n "$FOUND" ] && [ -z "$TEMP_PWD" ]; then
+                TEMP_PWD="$FOUND"
+              fi
+            fi
+          done
 
           echo "[+] Recupero RustDesk ID..."
           RUSTDESK_ID=""
@@ -274,9 +294,15 @@ jobs:
           echo "================================================================"
           echo "  RustDesk pronto!"
           echo "----------------------------------------------------------------"
-          echo "  RustDesk ID  : ${RUSTDESK_ID:-<NON DISPONIBILE - vedi log sotto>}"
-          echo "  Password     : ${RUNNER_PASSWORD}"
-          echo "  Client iOS   : https://apps.apple.com/app/rustdesk/id1581225015"
+          echo "  RustDesk ID         : ${RUSTDESK_ID:-<NON DISPONIBILE - vedi log sotto>}"
+          echo "  Password (input)    : ${RUNNER_PASSWORD}"
+          echo "  Password (temp)     : ${TEMP_PWD:-<non trovata - usa quella sopra>}"
+          echo "  Client iOS          : https://apps.apple.com/app/rustdesk/id1581225015"
+          echo ""
+          echo "  💡 NOTA: prova prima la password 'temp'. Se non funziona,"
+          echo "     usa quella 'input'. Se entrambe falliscono, connetti via"
+          echo "     VNC (100.x.y.z:5900) e imposta una password manualmente"
+          echo "     dalla GUI di RustDesk sul Mac."
           echo "================================================================"
           echo ""
           echo "[debug] Log del servizio RustDesk (ultime 30 righe):"
