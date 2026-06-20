@@ -241,10 +241,14 @@ jobs:
           done
           sleep 5  # extra wait per la registrazione sul server relay
 
+          echo "[+] Installo RustDesk come servizio (necessario per --password)..."
+          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --install-service 2>/dev/null || true
+          sleep 3
+
           echo "[+] Imposto password RustDesk per accesso non interattivo..."
           sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
           /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
-          echo "[..] Impostazione password fallita - verrà gestita dal config file"
+          echo "[..] Impostazione password fallita - sarà richiesta approvazione manuale"
 
           echo "[+] Recupero RustDesk ID..."
           RUSTDESK_ID=""
@@ -284,178 +288,13 @@ jobs:
                     -type f 2>/dev/null || true
 
       # ---------------------------------------------------------------
-      # STEP 4c - Self-hosted RustDesk relay (hbbs + hbbr) sulla stessa VM
-      #
-      #   hbbs = ID/Rendezvous server (porte 21115/21116/21118/21119)
-      #   hbbr = Relay server         (porta  21117)
-      #
-      #   Vantaggi rispetto al relay pubblico:
-      #     - Nessun limite di sessione
-      #     - Latenza minore (passa solo via Tailscale)
-      #     - Tutto il traffico nel tuo tailnet (privato)
-      #
-      #   Il client RustDesk locale viene riconfigurato per usare il
-      #   server locale; sul lato iPad bisognerà inserire l'IP Tailscale
-      #   come ID/Relay server + la public key generata.
-      # ---------------------------------------------------------------
-      - name: Setup self-hosted RustDesk relay (hbbs + hbbr)
-        continue-on-error: true
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set +x
-          echo "[+] Recupero ultima versione rustdesk-server..."
-          # Uso GITHUB_TOKEN per evitare il rate-limit dell'API pubblica
-          LATEST=$(curl -fsSL \
-                    -H "Authorization: Bearer ${GH_TOKEN}" \
-                    -H "Accept: application/vnd.github+json" \
-                    https://api.github.com/repos/rustdesk/rustdesk-server/releases/latest \
-                    | grep '"tag_name"' | head -n1 | cut -d'"' -f4)
-
-          # Fallback se l'API è ancora rate-limited
-          if [ -z "$LATEST" ]; then
-            LATEST="1.1.14"
-            echo "[!] API non raggiungibile, uso versione di fallback: $LATEST"
-          else
-            echo "[+] Versione trovata: $LATEST"
-          fi
-
-          echo "[+] Download binari rustdesk-server per macOS..."
-          cd /tmp
-          DL_URL="https://github.com/rustdesk/rustdesk-server/releases/download/${LATEST}/rustdesk-server-osx.zip"
-          if ! curl -fsSL -o rustdesk-server.zip "$DL_URL"; then
-            echo "[!] Download fallito da $DL_URL, provo versione fallback 1.1.14..."
-            LATEST="1.1.14"
-            DL_URL="https://github.com/rustdesk/rustdesk-server/releases/download/${LATEST}/rustdesk-server-osx.zip"
-            curl -fsSL -o rustdesk-server.zip "$DL_URL"
-          fi
-
-          rm -rf rustdesk-server-bin
-          unzip -q -o rustdesk-server.zip -d rustdesk-server-bin/
-
-          # Trova i binari (la struttura del .zip può variare per versione)
-          HBBS_BIN=$(find /tmp/rustdesk-server-bin -name hbbs -type f | head -n1)
-          HBBR_BIN=$(find /tmp/rustdesk-server-bin -name hbbr -type f | head -n1)
-          chmod +x "$HBBS_BIN" "$HBBR_BIN" 2>/dev/null || true
-          echo "[+] hbbs: ${HBBS_BIN}"
-          echo "[+] hbbr: ${HBBR_BIN}"
-
-          # Working dir per chiavi e database
-          mkdir -p /tmp/rustdesk-data
-          cd /tmp/rustdesk-data
-
-          echo "[+] Avvio hbbs (ID server)..."
-          sudo nohup "${HBBS_BIN}" -r 127.0.0.1:21117 > /tmp/hbbs.log 2>&1 &
-          sleep 3
-
-          echo "[+] Avvio hbbr (Relay server)..."
-          sudo nohup "${HBBR_BIN}" > /tmp/hbbr.log 2>&1 &
-          sleep 3
-
-          echo "[+] Attesa generazione public key..."
-          PUB_KEY=""
-          for i in {1..20}; do
-            # La key viene generata in /tmp/rustdesk-data oppure nella home di root
-            for KEY_PATH in \
-              /tmp/rustdesk-data/id_ed25519.pub \
-              /var/root/id_ed25519.pub \
-              ~/id_ed25519.pub; do
-              if sudo test -f "$KEY_PATH"; then
-                PUB_KEY=$(sudo cat "$KEY_PATH")
-                echo "[+] Public key trovata in: $KEY_PATH"
-                break 2
-              fi
-            done
-            sleep 1
-          done
-
-          # Recupera IP Tailscale per il client iPad
-          TS_IP=$(sudo tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4 | head -n1)
-          echo "[+] Tailscale IP: ${TS_IP}"
-
-          echo "[+] Verifica porte hbbs/hbbr in ascolto..."
-          sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -E '21115|21116|21117|21118|21119' || true
-
-          echo "[+] Riconfiguro client RustDesk locale per usare il server self-hosted..."
-          sudo pkill -f RustDesk 2>/dev/null || true
-          sleep 2
-
-          # Scrive config file di RustDesk con server locale
-          CFG_DIRS=(
-            "/Users/runner/Library/Preferences/com.carriez.RustDesk"
-            "/var/root/Library/Preferences/com.carriez.RustDesk"
-          )
-          for CFG_DIR in "${CFG_DIRS[@]}"; do
-            sudo mkdir -p "$CFG_DIR"
-            {
-              echo "rendezvous_server = '127.0.0.1:21116'"
-              echo "nat_type = 1"
-              echo "serial = 1"
-              echo ""
-              echo "[options]"
-              echo "custom-rendezvous-server = '127.0.0.1'"
-              echo "relay-server = '127.0.0.1'"
-              echo "key = '$PUB_KEY'"
-              echo "direct-server = 'Y'"
-            } | sudo tee "$CFG_DIR/RustDesk2.toml" > /dev/null
-          done
-
-          # Riavvio RustDesk per applicare la nuova config
-          open -a /Applications/RustDesk.app
-          sleep 8
-
-          # Imposto nuovamente la password (con sudo, ora che sappiamo che serve)
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || \
-            echo "[..] Password set fallito - sarà richiesta conferma manuale"
-
-          # Recupera il NUOVO RustDesk ID (ora generato dal server locale)
-          NEW_ID=""
-          for i in {1..20}; do
-            NEW_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null | tr -d '[:space:]')
-            if [ -n "$NEW_ID" ] && [ "$NEW_ID" != "0" ]; then
-              break
-            fi
-            sleep 2
-          done
-
-          echo ""
-          echo "================================================================"
-          echo "  🚀 RustDesk SELF-HOSTED relay PRONTO!"
-          echo "================================================================"
-          echo "  Tailscale IP    : ${TS_IP}"
-          echo "  RustDesk ID VM  : ${NEW_ID:-<vedi log debug>}"
-          echo "  Password        : ${RUNNER_PASSWORD}"
-          echo ""
-          echo "  🔑 Public Key (necessaria per il client iPad):"
-          echo "  ${PUB_KEY:-<NON GENERATA - vedi /tmp/hbbs.log>}"
-          echo ""
-          echo "  📱 CONFIGURAZIONE iPad (RustDesk app):"
-          echo "  1. Apri RustDesk → tocca i 3 puntini in alto → Settings"
-          echo "  2. Tocca 'ID/Relay Server'"
-          echo "  3. ID Server   : ${TS_IP}"
-          echo "  4. Relay Server: ${TS_IP}"
-          echo "  5. API Server  : (lascia vuoto)"
-          echo "  6. Key         : ${PUB_KEY}"
-          echo "  7. Tocca 'OK' / 'Apply' per salvare"
-          echo "  8. Torna alla home → inserisci ID: ${NEW_ID}"
-          echo "  9. Tocca connessione → password: ${RUNNER_PASSWORD}"
-          echo "================================================================"
-          echo ""
-          echo "[debug] hbbs log (ultime 20 righe):"
-          sudo tail -n 20 /tmp/hbbs.log 2>/dev/null || true
-          echo ""
-          echo "[debug] hbbr log (ultime 20 righe):"
-          sudo tail -n 20 /tmp/hbbr.log 2>/dev/null || true
+      # STEP 5 - Installazione Tailscale (headless)
       #
       #   Sui runner macOS GitHub-hosted NON è disponibile l'app GUI di
       #   Tailscale, quindi installiamo il pacchetto 'tailscaled' open
-      #   source via Homebrew e lo avviamo in modalità userspace-networking
-      #   (non richiede TUN/TAP né privilegi di kernel extension).
-      #
-      #   Flag rilevanti:
-      #     --tun=userspace-networking  => userspace networking (no kext)
-      #     --socket=...                => socket di controllo locale
-      #     --state=...                 => persistenza stato auth
+      #   source via Homebrew. Su macOS l'interfaccia utun è built-in
+      #   al kernel (no kext), quindi VNC/RustDesk funzionano su porte
+      #   arbitrarie via Tailscale.
       # ---------------------------------------------------------------
       - name: Install Tailscale (headless)
         run: |
