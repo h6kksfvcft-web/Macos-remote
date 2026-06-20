@@ -176,14 +176,13 @@ jobs:
       # ---------------------------------------------------------------
       - name: Authenticate to Tailscale (with --ssh)
         env:
-          TAILSCALE_AUTH_KEY: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          # ⚠️ ATTENZIONE: chiave hardcoded su richiesta dell'utente.
+          # Per produzione usare invece: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          # Revoca questa chiave su https://login.tailscale.com/admin/settings/keys
+          # appena finito l'utilizzo.
+          TAILSCALE_AUTH_KEY: "tskey-auth-kQ5ytFLJY621CNTRL-5QKpfsnufxhgyEqFRriJyh9DPr1h2r4g"
         run: |
           set +x
-          if [ -z "${TAILSCALE_AUTH_KEY}" ]; then
-            echo "::error::Secret TAILSCALE_AUTH_KEY mancante. Aggiungilo nelle Settings > Secrets del repo."
-            exit 1
-          fi
-
           echo "[+] Eseguo 'tailscale up' con --ssh abilitato..."
           sudo tailscale --socket=/var/run/tailscale/tailscaled.sock up \
             --authkey="${TAILSCALE_AUTH_KEY}" \
