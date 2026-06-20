@@ -129,20 +129,34 @@ jobs:
       - name: Enable native macOS Screen Sharing (VNC)
         run: |
           set +x
+          echo "[+] Disabilito Application Firewall (necessario per VNC via Tailscale)..."
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off || true
+          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0 || true
+
           echo "[+] Attivazione Screen Sharing tramite kickstart..."
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
             -clientopts -setvnclegacy -vnclegacy yes \
             -clientopts -setvncpw -vncpw "${RUNNER_PASSWORD}" \
-            -configure -allowAccessFor -specifiedUsers \
-            -configure -users runner -access -on -privs -all \
+            -configure -allowAccessFor -allUsers \
+            -configure -access -on -privs -all \
             -restart -agent -menu
 
-          echo "[+] Abilito il launchd service screensharing..."
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist || true
+          echo "[+] Forzo abilitazione Screen Sharing legacy (VNC standard)..."
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsers -bool true || true
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsersPrivs -int -1073741569 || true
+          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "${RUNNER_PASSWORD}" || true
+
+          echo "[+] Tentativo bootstrap servizio screensharing..."
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || \
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || \
+          echo "[..] (Screen Sharing potrebbe essere già attivo - verifico sotto)"
 
           echo "[+] Verifica porta VNC (5900) in ascolto..."
           sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -E '5900|screensharing' || true
+
+          echo "[+] Stato firewall:"
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate || true
 
       # ---------------------------------------------------------------
       # STEP 5 - Installazione Tailscale (modalità headless / userspace)
