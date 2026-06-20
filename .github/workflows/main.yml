@@ -175,34 +175,72 @@ jobs:
           echo "[+] Installazione AnyDesk via Homebrew Cask..."
           brew install --cask anydesk
 
-          echo "[+] Avvio del servizio AnyDesk..."
-          # Lancia AnyDesk in background
-          open -ga AnyDesk || true
-          sleep 5
+          echo "[+] Registro AnyDesk con Launch Services..."
+          /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+            -f /Applications/AnyDesk.app
+
+          echo "[+] Pre-autorizzo AnyDesk in TCC (Screen Recording / Accessibility)..."
+          # Concede permessi necessari evitando popup interattivi
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceScreenCapture','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceAccessibility','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
+
+          echo "[+] Avvio AnyDesk in background (path assoluto)..."
+          # Avvia direttamente il binario del demone se esiste, altrimenti l'app
+          sudo nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service \
+            > /tmp/anydesk-service.log 2>&1 &
+          sleep 3
+          open -a /Applications/AnyDesk.app || true
+
+          echo "[+] Attesa avvio servizio AnyDesk (max 30s)..."
+          for i in {1..30}; do
+            if /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-status 2>/dev/null | grep -qi "online\|logged_in\|ready"; then
+              echo "[+] AnyDesk servizio attivo."
+              break
+            fi
+            sleep 1
+          done
 
           echo "[+] Imposto password AnyDesk per accesso non interattivo..."
-          # Imposta password per accesso senza approvazione manuale
-          echo "${RUNNER_PASSWORD}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
-
-          # Riavvia AnyDesk per applicare la password
-          sudo pkill -f AnyDesk 2>/dev/null || true
-          sleep 2
-          open -ga AnyDesk
-          sleep 8
+          # Su macOS la password va impostata via sudo + stdin
+          echo "${RUNNER_PASSWORD}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password || \
+          echo "${RUNNER_PASSWORD}" | /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password || \
+          echo "[..] Impostazione password fallita - sarà richiesta conferma manuale"
 
           echo "[+] Recupero AnyDesk ID..."
-          ANYDESK_ID=$(/Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id 2>/dev/null || echo "")
-          if [ -z "$ANYDESK_ID" ]; then
-            # Fallback: leggi dal file di configurazione
-            ANYDESK_ID=$(grep -h "ad.anynet.id" ~/.anydesk/*.conf /var/root/.anydesk/*.conf 2>/dev/null | head -n1 | cut -d= -f2 || echo "")
+          ANYDESK_ID=""
+          for i in {1..20}; do
+            ANYDESK_ID=$(/Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id 2>/dev/null | tr -d '[:space:]')
+            if [ -n "$ANYDESK_ID" ] && [ "$ANYDESK_ID" != "0" ]; then
+              break
+            fi
+            echo "[..] Attesa registrazione ID ($i/20)..."
+            sleep 2
+          done
+
+          # Fallback: leggi l'ID dai file di configurazione
+          if [ -z "$ANYDESK_ID" ] || [ "$ANYDESK_ID" = "0" ]; then
+            ANYDESK_ID=$(sudo grep -h "ad.anynet.id" \
+              /Users/runner/.anydesk/service.conf \
+              /Users/runner/.anydesk/user.conf \
+              /var/root/.anydesk/service.conf \
+              /var/root/.anydesk/user.conf 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '[:space:]' || echo "")
           fi
 
+          echo ""
           echo "================================================================"
           echo "  AnyDesk pronto!"
           echo "----------------------------------------------------------------"
-          echo "  AnyDesk ID  : ${ANYDESK_ID:-<vedi log AnyDesk per ID>}"
+          echo "  AnyDesk ID  : ${ANYDESK_ID:-<NON DISPONIBILE - vedi log sotto>}"
           echo "  Password    : ${RUNNER_PASSWORD}"
           echo "================================================================"
+          echo ""
+          echo "[debug] Log del servizio AnyDesk (ultime 30 righe):"
+          tail -n 30 /tmp/anydesk-service.log 2>/dev/null || true
+          echo ""
+          echo "[debug] Config files presenti:"
+          sudo ls -la /Users/runner/.anydesk/ /var/root/.anydesk/ 2>/dev/null || true
       #
       #   Sui runner macOS GitHub-hosted NON è disponibile l'app GUI di
       #   Tailscale, quindi installiamo il pacchetto 'tailscaled' open
