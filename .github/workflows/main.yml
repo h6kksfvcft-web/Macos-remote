@@ -169,15 +169,19 @@ jobs:
       # ---------------------------------------------------------------
       # STEP 6 - Avvio del demone tailscaled in background
       #
-      #   Lo lanciamo con 'nohup' + '&' per scollegarlo dalla shell e
-      #   reindirizziamo i log su file in modo da poterli ispezionare
-      #   in caso di problemi.
+      #   Su macOS l'interfaccia 'utun' è built-in al kernel (no kext),
+      #   quindi NON usiamo --tun=userspace-networking: con quella opzione
+      #   le connessioni in ingresso su porte arbitrarie (es. VNC 5900)
+      #   non vengono inoltrate ai servizi locali.
+      #
+      #   Senza il flag, tailscaled usa una vera interfaccia utun e la
+      #   porta 5900 di Screen Sharing è raggiungibile direttamente
+      #   tramite l'IP Tailscale 100.x.y.z.
       # ---------------------------------------------------------------
-      - name: Start tailscaled daemon (userspace networking)
+      - name: Start tailscaled daemon (native utun)
         run: |
-          echo "[+] Avvio tailscaled in modalità userspace..."
+          echo "[+] Avvio tailscaled con interfaccia utun nativa..."
           sudo nohup tailscaled \
-            --tun=userspace-networking \
             --socket=/var/run/tailscale/tailscaled.sock \
             --state=/var/lib/tailscale/tailscaled.state \
             > /tmp/tailscaled.log 2>&1 &
@@ -191,6 +195,9 @@ jobs:
             echo "[..] attesa tailscaled ($i/15)..."
             sleep 1
           done
+
+          # Mostra l'interfaccia utun creata
+          ifconfig | grep -A2 utun || true
 
       # ---------------------------------------------------------------
       # STEP 7 - Autenticazione su Tailnet con SSH abilitato
