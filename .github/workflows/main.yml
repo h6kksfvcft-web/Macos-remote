@@ -1,139 +1,90 @@
-# =====================================================================
-#  Workflow: macOS Sequoia Remote Access (Solo RustDesk)
-# ---------------------------------------------------------------------
-#  Scopo:
-#    Avvia un runner GitHub-hosted macOS Sequoia (macos-15), installa
-#    RustDesk in modalità headless, configura la password di accesso
-#    e mantiene la VM attiva fino a 6 ore.
-# =====================================================================
-
-name: macOS Sequoia Remote Access (RustDesk Only)
+name: macOS Sequoia Remote Access (Pagekite)
 
 on:
   workflow_dispatch:
     inputs:
       vnc_password:
-        description: "Password per l'accesso remoto con RustDesk."
+        description: "Password per l'accesso VNC"
         required: false
-        default: "P@ssw0rd!Remote2026"
+        default: "SimoneLia2026!"
         type: string
 
 jobs:
   macos-remote:
-    name: Bootstrap macOS Sequoia VM
     runs-on: macos-15
     timeout-minutes: 360
-
     env:
       RUNNER_PASSWORD: ${{ github.event.inputs.vnc_password }}
 
     steps:
       # ---------------------------------------------------------------
-      # STEP 1 - Checkout
+      # STEP 1 - Checkout repository
       # ---------------------------------------------------------------
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
       # ---------------------------------------------------------------
-      # STEP 2 - Informazioni di sistema
+      # STEP 2 - Attivazione Screen Sharing (VNC) nativo di macOS
       # ---------------------------------------------------------------
-      - name: System information
-        run: |
-          echo "===== Host info ====="
-          sw_vers
-          uname -a
-          echo "Current user: $(whoami)"
-
-      # ---------------------------------------------------------------
-      # STEP 3 - Ottimizzazioni performance grafiche
-      # ---------------------------------------------------------------
-      - name: Optimize macOS for remote desktop performance
-        continue-on-error: true
+      - name: Enable Native macOS VNC
         run: |
           set +x
-          echo "[+] Disabilito animazioni Dock e finestre..."
-          defaults write com.apple.dock launchanim -bool false
-          defaults write com.apple.dock expose-animation-duration -float 0
-          defaults write com.apple.dock autohide-time-modifier -float 0
-          defaults write com.apple.dock autohide-delay -float 0
-          defaults write NSGlobalDomain NSWindowResizeTime -float 0.001
-          defaults write NSGlobalDomain NSAutomaticWindowAnimationsEnabled -bool false
-          defaults write NSGlobalDomain NSScrollAnimationEnabled -bool false
-          defaults write com.apple.finder DisableAllAnimations -bool true
-
-          echo "[+] Riduco effetti grafici..."
-          defaults write com.apple.universalaccess reduceTransparency -bool true
-          defaults write com.apple.universalaccess reduceMotion -bool true
-
-          echo "[+] Imposto sfondo nero a tinta unita..."
-          osascript -e 'tell application "System Events" to tell every desktop to set picture to ""' 2>/dev/null || true
-
-          echo "[+] Disabilito Spotlight indexing..."
-          sudo mdutil -a -i off 2>/dev/null || true
-
-          echo "[+] Riavvio Dock e Finder..."
-          killall Dock 2>/dev/null || true
-          killall Finder 2>/dev/null || true
-
-      # ---------------------------------------------------------------
-      # STEP 4 - Installazione e Configurazione RustDesk
-      # ---------------------------------------------------------------
-      - name: Install and Configure RustDesk
-        continue-on-error: true
-        run: |
-          set +x
-          echo "[+] Installazione RustDesk via Homebrew..."
-          brew install --cask rustdesk
-
-          echo "[+] Registro RustDesk con Launch Services..."
-          /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
-            -f /Applications/RustDesk.app
-
-          echo "[+] Avvio servizio RustDesk in background..."
-          sudo nohup /Applications/RustDesk.app/Contents/MacOS/RustDesk --service \
-            > /tmp/rustdesk-service.log 2>&1 &
-          sleep 3
-          open -a /Applications/RustDesk.app || true
-
-          echo "[+] Attesa avvio servizio RustDesk..."
-          for i in {1..30}; do
-            if pgrep -f "RustDesk" > /dev/null; then break; fi
-            sleep 1
-          done
-          sleep 5
-
-          echo "[+] Installo RustDesk come servizio di sistema..."
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --install-service 2>/dev/null || true
-          sleep 3
+          echo "[+] Spegnimento firewall di sistema..."
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off || true
+          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0 || true
           
-          echo "[+] Imposto la password personalizzata..."
-          sudo /Applications/RustDesk.app/Contents/MacOS/RustDesk --password "${RUNNER_PASSWORD}" || true
-
-          echo "[+] Recupero RustDesk ID ufficiale..."
-          RUSTDESK_ID=""
-          for i in {1..15}; do
-            RUSTDESK_ID=$(/Applications/RustDesk.app/Contents/MacOS/RustDesk --get-id 2>/dev/null | tr -d '[:space:]')
-            if [ -n "$RUSTDESK_ID" ] && [ "$RUSTDESK_ID" != "0" ]; then break; fi
-            sleep 2
-          done
-
-          echo ""
-          echo "================================================================"
-          echo "  RustDesk è PRONTO! Connettiti usando questi dati:"
-          echo "----------------------------------------------------------------"
-          echo "  RustDesk ID : ${RUSTDESK_ID}"
-          echo "  Password    : ${RUNNER_PASSWORD}"
-          echo "================================================================"
+          echo "[+] Configurazione e avvio kickstart per Screen Sharing..."
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -clientopts -setvnclegacy -vnclegacy yes \
+            -clientopts -setvncpw -vncpw "${RUNNER_PASSWORD}" \
+            -configure -allowAccessFor -allUsers \
+            -configure -access -on -privs -all \
+            -restart -agent -menu
+          
+          echo "[+] Forzo preferenze di condivisione dello schermo..."
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsers -bool true || true
+          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "${RUNNER_PASSWORD}" || true
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
 
       # ---------------------------------------------------------------
-      # STEP 5 - KEEP-ALIVE (Massimo 6 ore)
+      # STEP 3 - Installazione e Avvio di Pagekite
       # ---------------------------------------------------------------
-      - name: Keep VM alive (max 6h)
+      - name: Install and Run Pagekite Tunnel
         run: |
-          echo "[+] Inizio keep-alive: il Mac rimarrà acceso per 6 ore."
+          echo "[+] Download di Pagekite..."
+          curl -s https://pagekite.net/pk/ | sudo bash
+          
+          echo "[+] Avvio del tunnel TCP sulla porta VNC (5900)..."
+          # Creiamo un tunnel generico usando il backend pubblico di pagekite
+          sudo nohup pagekite.py --clean 5900 raw:5900 > /tmp/pagekite.log 2>&1 &
+          
+          # Aspetta che il tunnel si sincronizzi con i server pubblici
+          sleep 10
+
+      # ---------------------------------------------------------------
+      # STEP 4 - Estrazione dei dati di connessione dai log
+      # ---------------------------------------------------------------
+      - name: Display Connection Details
+        run: |
+          echo "================================================================"
+          echo "  DATI PER IL COLLEGAMENTO REMOTO"
+          echo "----------------------------------------------------------------"
+          echo "  Controlla le righe qui sotto per trovare il tuo indirizzo temporaneo:"
+          echo ""
+          cat /tmp/pagekite.log | grep -E "is live|Flyback" || cat /tmp/pagekite.log
+          echo ""
+          echo "  Password VNC : ${RUNNER_PASSWORD}"
+          echo "================================================================"
+
+      # ---------------------------------------------------------------
+      # STEP 5 - Mantenimento della sessione attiva (6 ore)
+      # ---------------------------------------------------------------
+      - name: Keep VM Alive
+        run: |
           END=$((SECONDS+21600))
           while [ $SECONDS -lt $END ]; do
             REMAINING=$((END-SECONDS))
-            echo "[heartbeat] Mac attivo. Tempo rimanente: ${REMAINING}s"
+            echo "[heartbeat] Mac online. Tempo rimasto: ${REMAINING}s"
             sleep 600
           done
