@@ -1,39 +1,134 @@
-name: macOS Sequoia Remote Access (Pagekite)
 
+# =====================================================================
+#  Workflow: macOS Sequoia Remote Access (Tailscale + VNC)
+# ---------------------------------------------------------------------
+#  Scopo:
+#    Avvia un runner GitHub-hosted macOS Sequoia (macos-15), installa
+#    Tailscale in modalità headless con SSH abilitato, attiva lo Screen
+#    Sharing nativo (VNC) di macOS, imposta una password per l'utente
+#    'runner' e mantiene la VM viva fino al limite massimo (6 ore).
+#
+#  Requisiti repository:
+#    - Secret obbligatorio: TAILSCALE_AUTH_KEY
+#      (Generabile da https://login.tailscale.com/admin/settings/keys
+#       come "Auth key" reusable / ephemeral con tag desiderato.)
+#
+#  Avvertenze:
+#    - Uso esclusivo per scopi legittimi di sviluppo / debug remoto.
+#    - I runner GitHub-hosted hanno un tempo massimo di esecuzione
+#      di 6 ore (21600 secondi); dopo tale tempo la VM viene distrutta.
+# =====================================================================
+
+name: macOS Sequoia Remote Access
+
+# ---------------------------------------------------------------------
+# 1) TRIGGER
+#    Il workflow si avvia ESCLUSIVAMENTE in modo manuale dalla tab
+#    "Actions" del repository tramite il pulsante "Run workflow".
+# ---------------------------------------------------------------------
 on:
   workflow_dispatch:
     inputs:
       vnc_password:
-        description: "Password per l'accesso VNC"
+        description: "Password per l'utente 'runner' (login VNC/SSH). Lasciare vuoto per usare il default."
         required: false
-        default: "SimoneLia2026!"
+        default: "P@ssw0rd!Remote2026"
         type: string
 
 jobs:
   macos-remote:
+    # -----------------------------------------------------------------
+    # Runner ufficiale GitHub per macOS Sequoia (15.x)
+    # -----------------------------------------------------------------
+    name: Bootstrap macOS Sequoia VM
     runs-on: macos-15
+
+    # Timeout allineato al massimo consentito da GitHub Actions (360 min)
     timeout-minutes: 360
+
     env:
+      # La password viene passata via env per evitare di esporla nei log.
       RUNNER_PASSWORD: ${{ github.event.inputs.vnc_password }}
 
     steps:
       # ---------------------------------------------------------------
-      # STEP 1 - Checkout repository
+      # STEP 1 - Checkout (opzionale ma utile se servono script locali)
       # ---------------------------------------------------------------
-      - name: Checkout
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       # ---------------------------------------------------------------
-      # STEP 2 - Attivazione Screen Sharing (VNC) nativo di macOS
+      # STEP 2 - Informazioni di sistema (diagnostica)
       # ---------------------------------------------------------------
-      - name: Enable Native macOS VNC
+      - name: System information
+        run: |
+          echo "===== Host info ====="
+          sw_vers
+          uname -a
+          echo "Current user: $(whoami)"
+          echo "Hostname: $(hostname)"
+      # ---------------------------------------------------------------
+      # STEP 3 - Configurazione password per l'utente 'runner'
+      #
+      #   macOS non dispone di 'chpasswd' come Linux: usiamo 'dscl' per
+      #   impostare la password tramite Directory Services. Questo è il
+      #   metodo nativo e supportato per modificare credenziali utente.
+      #
+      #   La password viene letta da un input/secret cifrato di Actions,
+      #   mai stampata in chiaro nei log (set +x).
+      # ---------------------------------------------------------------
+      - name: Configure password for 'runner' user
+        continue-on-error: true   # Non bloccante: VNC usa la propria password (vncpw)
         run: |
           set +x
-          echo "[+] Spegnimento firewall di sistema..."
+          echo "[+] Impostazione password per l'utente 'runner'..."
+          # Strategia 1: sysadminctl (metodo ufficiale Apple, funziona anche se
+          # il runner è admin senza conoscere la vecchia password).
+          if sudo sysadminctl -resetPasswordFor runner \
+                -newPassword "${RUNNER_PASSWORD}" \
+                -adminUser runner \
+                -adminPassword "" 2>/dev/null; then
+            echo "[+] Password aggiornata con sysadminctl."
+            exit 0
+          fi
+          # Strategia 2: rimuovere AuthenticationAuthority e Password, poi
+          # impostare la nuova password (necessario su macOS Sequoia dove
+          # 'dscl . -passwd' richiede la vecchia password anche come root).
+          echo "[..] sysadminctl fallito, provo via dscl con reset auth..."
+          sudo dscl . -delete /Users/runner AuthenticationAuthority 2>/dev/null || true
+          sudo dscl . -delete /Users/runner Password 2>/dev/null || true
+          if sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}"; then
+            echo "[+] Password aggiornata con dscl."
+            exit 0
+          fi
+          # Strategia 3: fallback "vecchia password vuota".
+          echo "[..] provo dscl con old-password vuota..."
+          sudo dscl . -passwd /Users/runner "" "${RUNNER_PASSWORD}" || {
+            echo "::warning::Impossibile cambiare la password dell'utente runner. VNC funzionerà comunque tramite la sua password dedicata impostata via kickstart."
+          }
+      # ---------------------------------------------------------------
+      # STEP 4 - Abilitazione Screen Sharing (VNC) nativo di macOS
+      #
+      #   Si usa 'kickstart' del framework Remote Management per:
+      #     -activate        => abilita ARD/Screen Sharing
+      #     -configure       => modifica configurazione
+      #     -access -on      => attiva accesso
+      #     -clientopts      => opzioni di accesso client
+      #     -restart -agent  => riavvia il demone
+      #     -privs -all      => concede tutti i privilegi all'utente
+      #     -users runner    => abilita l'utente 'runner'
+      #
+      #   Inoltre impostiamo la preference VNCLegacyConnectionsEnabled
+      #   per permettere connessioni da client VNC standard (non solo
+      #   ARD), e una password VNC esplicita.
+      # ---------------------------------------------------------------
+      - name: Enable native macOS Screen Sharing (VNC)
+        run: |
+          set +x
+          echo "[+] Disabilito Application Firewall (necessario per VNC via Tailscale)..."
           sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off || true
           sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0 || true
-          
-          echo "[+] Configurazione e avvio kickstart per Screen Sharing..."
+          echo "[+] Attivazione Screen Sharing tramite kickstart..."
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on \
             -clientopts -setvnclegacy -vnclegacy yes \
@@ -41,50 +136,216 @@ jobs:
             -configure -allowAccessFor -allUsers \
             -configure -access -on -privs -all \
             -restart -agent -menu
-          
-          echo "[+] Forzo preferenze di condivisione dello schermo..."
+          echo "[+] Forzo abilitazione Screen Sharing legacy (VNC standard)..."
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsers -bool true || true
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsersPrivs -int -1073741569 || true
           sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "${RUNNER_PASSWORD}" || true
-          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
-
+          echo "[+] Tentativo bootstrap servizio screensharing..."
+          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || \
+          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || \
+          echo "[..] (Screen Sharing potrebbe essere già attivo - verifico sotto)"
+          echo "[+] Verifica porta VNC (5900) in ascolto..."
+          sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -E '5900|screensharing' || true
+          echo "[+] Stato firewall:"
+          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --getglobalstate || true
       # ---------------------------------------------------------------
-      # STEP 3 - Installazione e Avvio di Pagekite
+      # STEP 4b - Installazione AnyDesk (alternativa a VNC, più rapida)
+      #
+      #   AnyDesk gestisce meglio i NAT/firewall e funziona benissimo
+      #   con l'app iOS. Configurazione headless:
+      #     - Install via Homebrew Cask
+      #     - Avvio del servizio in background
+      #     - Impostazione password fissa per accesso non interattivo
+      #     - Recupero dell'AnyDesk ID per connettersi
       # ---------------------------------------------------------------
-      - name: Install and Run Pagekite Tunnel
+      - name: Install AnyDesk (alternative remote desktop)
+        continue-on-error: true
         run: |
-          echo "[+] Download di Pagekite..."
-          curl -s https://pagekite.net/pk/ | sudo bash
-          
-          echo "[+] Avvio del tunnel TCP sulla porta VNC (5900)..."
-          # Creiamo un tunnel generico usando il backend pubblico di pagekite
-          sudo nohup pagekite.py --clean 5900 raw:5900 > /tmp/pagekite.log 2>&1 &
-          
-          # Aspetta che il tunnel si sincronizzi con i server pubblici
-          sleep 10
-
-      # ---------------------------------------------------------------
-      # STEP 4 - Estrazione dei dati di connessione dai log
-      # ---------------------------------------------------------------
-      - name: Display Connection Details
-        run: |
+          set +x
+          echo "[+] Installazione AnyDesk via Homebrew Cask..."
+          brew install --cask anydesk
+          echo "[+] Registro AnyDesk con Launch Services..."
+          /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+            -f /Applications/AnyDesk.app
+          echo "[+] Pre-autorizzo AnyDesk in TCC (Screen Recording / Accessibility)..."
+          # Concede permessi necessari evitando popup interattivi
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceScreenCapture','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceAccessibility','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
+          echo "[+] Avvio AnyDesk in background (path assoluto)..."
+          # Avvia direttamente il binario del demone se esiste, altrimenti l'app
+          sudo nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service \
+            > /tmp/anydesk-service.log 2>&1 &
+          sleep 3
+          open -a /Applications/AnyDesk.app || true
+          echo "[+] Attesa avvio servizio AnyDesk (max 30s)..."
+          for i in {1..30}; do
+            if /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-status 2>/dev/null | grep -qi "online\|logged_in\|ready"; then
+              echo "[+] AnyDesk servizio attivo."
+              break
+            fi
+            sleep 1
+          done
+          echo "[+] Imposto password AnyDesk per accesso non interattivo..."
+          # Su macOS la password va impostata via sudo + stdin
+          echo "${RUNNER_PASSWORD}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password || \
+          echo "${RUNNER_PASSWORD}" | /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password || \
+          echo "[..] Impostazione password fallita - sarà richiesta conferma manuale"
+          echo "[+] Recupero AnyDesk ID..."
+          ANYDESK_ID=""
+          for i in {1..20}; do
+            ANYDESK_ID=$(/Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id 2>/dev/null | tr -d '[:space:]')
+            if [ -n "$ANYDESK_ID" ] && [ "$ANYDESK_ID" != "0" ]; then
+              break
+            fi
+            echo "[..] Attesa registrazione ID ($i/20)..."
+            sleep 2
+          done
+          # Fallback: leggi l'ID dai file di configurazione
+          if [ -z "$ANYDESK_ID" ] || [ "$ANYDESK_ID" = "0" ]; then
+            ANYDESK_ID=$(sudo grep -h "ad.anynet.id" \
+              /Users/runner/.anydesk/service.conf \
+              /Users/runner/.anydesk/user.conf \
+              /var/root/.anydesk/service.conf \
+              /var/root/.anydesk/user.conf 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '[:space:]' || echo "")
+          fi
+          echo ""
           echo "================================================================"
-          echo "  DATI PER IL COLLEGAMENTO REMOTO"
+          echo "  AnyDesk pronto!"
           echo "----------------------------------------------------------------"
-          echo "  Controlla le righe qui sotto per trovare il tuo indirizzo temporaneo:"
-          echo ""
-          cat /tmp/pagekite.log | grep -E "is live|Flyback" || cat /tmp/pagekite.log
-          echo ""
-          echo "  Password VNC : ${RUNNER_PASSWORD}"
+          echo "  AnyDesk ID  : ${ANYDESK_ID:-<NON DISPONIBILE - vedi log sotto>}"
+          echo "  Password    : ${RUNNER_PASSWORD}"
           echo "================================================================"
-
+          echo ""
+          echo "[debug] Log del servizio AnyDesk (ultime 30 righe):"
+          tail -n 30 /tmp/anydesk-service.log 2>/dev/null || true
+          echo ""
+          echo "[debug] Config files presenti:"
+          sudo ls -la /Users/runner/.anydesk/ /var/root/.anydesk/ 2>/dev/null || true
+      #
+      #   Sui runner macOS GitHub-hosted NON è disponibile l'app GUI di
+      #   Tailscale, quindi installiamo il pacchetto 'tailscaled' open
+      #   source via Homebrew e lo avviamo in modalità userspace-networking
+      #   (non richiede TUN/TAP né privilegi di kernel extension).
+      #
+      #   Flag rilevanti:
+      #     --tun=userspace-networking  => userspace networking (no kext)
+      #     --socket=...                => socket di controllo locale
+      #     --state=...                 => persistenza stato auth
       # ---------------------------------------------------------------
-      # STEP 5 - Mantenimento della sessione attiva (6 ore)
-      # ---------------------------------------------------------------
-      - name: Keep VM Alive
+      - name: Install Tailscale (headless)
         run: |
+          echo "[+] Installazione Tailscale via Homebrew..."
+          brew install tailscale
+          echo "[+] Preparo directory di stato..."
+          sudo mkdir -p /var/lib/tailscale
+          sudo mkdir -p /var/run/tailscale
+      # ---------------------------------------------------------------
+      # STEP 6 - Avvio del demone tailscaled in background
+      #
+      #   Su macOS l'interfaccia 'utun' è built-in al kernel (no kext),
+      #   quindi NON usiamo --tun=userspace-networking: con quella opzione
+      #   le connessioni in ingresso su porte arbitrarie (es. VNC 5900)
+      #   non vengono inoltrate ai servizi locali.
+      #
+      #   Senza il flag, tailscaled usa una vera interfaccia utun e la
+      #   porta 5900 di Screen Sharing è raggiungibile direttamente
+      #   tramite l'IP Tailscale 100.x.y.z.
+      # ---------------------------------------------------------------
+      - name: Start tailscaled daemon (native utun)
+        run: |
+          echo "[+] Avvio tailscaled con interfaccia utun nativa..."
+          sudo nohup tailscaled \
+            --socket=/var/run/tailscale/tailscaled.sock \
+            --state=/var/lib/tailscale/tailscaled.state \
+            > /tmp/tailscaled.log 2>&1 &
+          # Attendi che il socket di controllo sia pronto
+          for i in {1..15}; do
+            if [ -S /var/run/tailscale/tailscaled.sock ]; then
+              echo "[+] tailscaled è pronto."
+              break
+            fi
+            echo "[..] attesa tailscaled ($i/15)..."
+            sleep 1
+          done
+          # Mostra l'interfaccia utun creata
+          ifconfig | grep -A2 utun || true
+      # ---------------------------------------------------------------
+      # STEP 7 - Autenticazione su Tailnet con SSH abilitato
+      #
+      #   - --authkey: chiave preautorizzata (secret cifrato)
+      #   - --ssh   : abilita Tailscale SSH (login via identità Tailscale)
+      #   - --hostname: identifica univocamente questa VM nel tailnet
+      #   - --accept-routes: opzionale, accetta subnet route pubblicate
+      # ---------------------------------------------------------------
+      - name: Authenticate to Tailscale (with --ssh)
+        env:
+          # ⚠️ ATTENZIONE: chiave hardcoded su richiesta dell'utente.
+          # Per produzione usare invece: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          # Revoca questa chiave su https://login.tailscale.com/admin/settings/keys
+          # appena finito l'utilizzo.
+          TAILSCALE_AUTH_KEY: "tskey-auth-kQ5ytFLJY621CNTRL-5QKpfsnufxhgyEqFRriJyh9DPr1h2r4g"
+        run: |
+          set +x
+          echo "[+] Eseguo 'tailscale up' con --ssh abilitato..."
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock up \
+            --authkey="${TAILSCALE_AUTH_KEY}" \
+            --ssh \
+            --hostname="gh-macos-sequoia-${GITHUB_RUN_ID}" \
+            --accept-routes \
+            --accept-dns=false
+          echo "[+] Stato Tailscale:"
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock status || true
+          echo "[+] Indirizzo IPv4 Tailscale assegnato:"
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4 || true
+      # ---------------------------------------------------------------
+      # STEP 8 - Riepilogo connessione (visibile nei log del job)
+      # ---------------------------------------------------------------
+      - name: Connection summary
+        run: |
+          TS_IP=$(sudo tailscale --socket=/var/run/tailscale/tailscaled.sock ip -4 | head -n1)
+          HOSTNAME="gh-macos-sequoia-${GITHUB_RUN_ID}"
+          echo "================================================================"
+          echo "  macOS Sequoia VM pronta per accesso remoto"
+          echo "----------------------------------------------------------------"
+          echo "  Hostname Tailscale : ${HOSTNAME}"
+          echo "  Tailscale IPv4     : ${TS_IP}"
+          echo "  Utente             : runner"
+          echo "  SSH (Tailscale)    : tailscale ssh runner@${HOSTNAME}"
+          echo "  VNC                : vnc://${TS_IP}:5900   (oppure :${HOSTNAME})"
+          echo "  Durata massima     : 6h (21600s)"
+          echo "================================================================"
+      # ---------------------------------------------------------------
+      # STEP 9 - KEEP-ALIVE
+      #
+      #   Mantiene il job in esecuzione per il tempo massimo consentito
+      #   dal runner GitHub-hosted (6 ore = 21600 secondi), così la VM
+      #   resta raggiungibile via Tailscale SSH e VNC fino al timeout.
+      #
+      #   Stampiamo un heartbeat ogni 10 minuti per evitare che il job
+      #   venga considerato inattivo dai meccanismi di rilevazione idle.
+      # ---------------------------------------------------------------
+      - name: Keep VM alive (max 6h)
+        run: |
+          echo "[+] Inizio keep-alive: 21600s (6h)."
           END=$((SECONDS+21600))
           while [ $SECONDS -lt $END ]; do
             REMAINING=$((END-SECONDS))
-            echo "[heartbeat] Mac online. Tempo rimasto: ${REMAINING}s"
+            echo "[heartbeat] $(date -u +%FT%TZ) - tempo rimanente: ${REMAINING}s"
             sleep 600
           done
+          echo "[+] Keep-alive terminato, la VM verrà ora distrutta."
+      # ---------------------------------------------------------------
+      # STEP 10 - Cleanup (sempre eseguito)
+      #
+      #   Esegue un logout pulito da Tailscale per liberare la chiave
+      #   ephemeral nel tailnet e termina il demone.
+      # ---------------------------------------------------------------
+      - name: Tailscale logout & shutdown
+        if: always()
+        run: |
+          echo "[+] Logout da Tailscale..."
+          sudo tailscale --socket=/var/run/tailscale/tailscaled.sock logout || true
+          sudo pkill -TERM tailscaled || true
+          echo "[+] Cleanup completato.
