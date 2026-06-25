@@ -41,7 +41,7 @@ jobs:
     # Runner ufficiale GitHub per macOS Sequoia (15.x)
     # -----------------------------------------------------------------
     name: Bootstrap macOS Sequoia VM
-    runs-on: macos-15
+    runs-on: macos-13
 
     # Timeout allineato al massimo consentito da GitHub Actions (360 min)
     timeout-minutes: 360
