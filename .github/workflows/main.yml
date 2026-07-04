@@ -1,14 +1,10 @@
 # =====================================================================
-#  Workflow: macOS Sequoia Remote Access (VNC via Ngrok)
+#  Workflow: macOS Sequoia Remote Access (Solo AnyDesk)
 # ---------------------------------------------------------------------
 #  Scopo:
-#    Avvia un runner GitHub-hosted macOS Sequoia (macos-15), attiva lo 
-#    Screen Sharing nativo (VNC) di macOS, imposta la password per l'utente
-#    'runner' e apre un tunnel pubblico sicuro tramite Ngrok.
-#
-#  Requisiti repository:
-#    - Secret obbligatorio: NGROK_AUTHTOKEN
-#      (Prendilo gratis creando un account su https://ngrok.com)
+#    Avvia un runner GitHub-hosted macOS Sequoia (macos-15), imposta
+#    la password dell'utente 'runner', scarica e configura AnyDesk
+#    in modalità headless per l'accesso immediato senza interruzioni.
 # =====================================================================
 
 name: macOS Sequoia Remote Access
@@ -17,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       vnc_password:
-        description: "Password per l'utente 'runner' (login VNC/SSH)."
+        description: "Password per l'accesso AnyDesk e utente 'runner'."
         required: false
         default: "P@ssw0rd!Remote2026"
         type: string
@@ -39,7 +35,7 @@ jobs:
         uses: actions/checkout@v4
 
       # ---------------------------------------------------------------
-      # STEP 2 - Informazioni di sistema (diagnostica)
+      # STEP 2 - Informazioni di sistema
       # ---------------------------------------------------------------
       - name: System information
         run: |
@@ -47,7 +43,6 @@ jobs:
           sw_vers
           uname -a
           echo "Current user: $(whoami)"
-          echo "Hostname: $(hostname)"
 
       # ---------------------------------------------------------------
       # STEP 3 - Configurazione password per l'utente 'runner'
@@ -56,7 +51,7 @@ jobs:
         continue-on-error: true
         run: |
           set +x
-          echo "[+] Impostazione password per l'utente 'runner'..."
+          echo "[+] Impostazione password utente..."
           if sudo sysadminctl -resetPasswordFor runner \
                 -newPassword "${RUNNER_PASSWORD}" \
                 -adminUser runner \
@@ -67,101 +62,83 @@ jobs:
           
           sudo dscl . -delete /Users/runner AuthenticationAuthority 2>/dev/null || true
           sudo dscl . -delete /Users/runner Password 2>/dev/null || true
-          if sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}"; then
-            echo "[+] Password aggiornata con dscl."
-            exit 0
-          fi
-          
-          sudo dscl . -passwd /Users/runner "" "${RUNNER_PASSWORD}" || {
-            echo "::warning::Impossibile cambiare la password."
-          }
+          sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}" 2>/dev/null || true
 
       # ---------------------------------------------------------------
-      # STEP 4 - Abilitazione Screen Sharing (VNC) nativo di macOS
+      # STEP 4 - Download e Installazione Rapida / Silenziosa di AnyDesk
       # ---------------------------------------------------------------
-      - name: Enable native macOS Screen Sharing (VNC)
+      - name: Install AnyDesk Fast & Headless
+        run: |
+          echo "[+] Scaricamento diretto del file DMG di AnyDesk..."
+          curl -L -o /tmp/anydesk.dmg https://download.anydesk.com/macos/anydesk.dmg
+          
+          echo "[+] Montaggio del DMG..."
+          sudo hdiutil attach /tmp/anydesk.dmg -nobrowse -quiet
+          
+          echo "[+] Copia dell'applicazione in /Applications..."
+          sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
+          
+          echo "[+] Smontaggio del DMG..."
+          sudo hdiutil detach /Volumes/AnyDesk -quiet
+          
+          echo "[+] Registrazione con i Launch Services..."
+          /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
+            -f /Applications/AnyDesk.app
+
+      # ---------------------------------------------------------------
+      # STEP 5 - Configurazione Password e Avvio Servizio AnyDesk
+      # ---------------------------------------------------------------
+      - name: Configure and Start AnyDesk
         run: |
           set +x
-          echo "[+] Disabilito Application Firewall..."
-          sudo /usr/libexec/ApplicationFirewall/socketfilterfw --setglobalstate off || true
-          sudo defaults write /Library/Preferences/com.apple.alf globalstate -int 0 || true
+          echo "[+] Configurazione permessi bypass TCC database..."
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceScreenCapture','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
+          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceAccessibility','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
           
-          echo "[+] Attivazione Screen Sharing tramite kickstart..."
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -clientopts -setvnclegacy -vnclegacy yes \
-            -clientopts -setvncpw -vncpw "${RUNNER_PASSWORD}" \
-            -configure -allowAccessFor -allUsers \
-            -configure -access -on -privs -all \
-            -restart -agent -menu
+          echo "[+] Avvio forzato del servizio AnyDesk in background..."
+          sudo nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service > /tmp/anydesk-service.log 2>&1 &
+          sleep 4
           
-          echo "[+] Forzo abilitazione Screen Sharing legacy (VNC standard)..."
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsers -bool true || true
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ARD_AllLocalUsersPrivs -int -1073741569 || true
-          sudo defaults write /Library/Preferences/com.apple.VNCSettings.txt Password -string "${RUNNER_PASSWORD}" || true
+          echo "[+] Apertura dell'interfaccia dell'applicazione..."
+          open -a /Applications/AnyDesk.app || true
+          sleep 3
           
-          echo "[+] Tentativo bootstrap servizio screensharing..."
-          sudo launchctl bootstrap system /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || \
-          sudo launchctl load -w /System/Library/LaunchDaemons/com.apple.screensharing.plist 2>/dev/null || true
+          echo "[+] Impostazione password per accesso non presidiato..."
+          echo "${RUNNER_PASSWORD}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
           
-          echo "[+] Verifica porta VNC (5900) in ascolto..."
-          sudo lsof -iTCP -sTCP:LISTEN -n -P | grep -E '5900|screensharing' || true
-
-      # ---------------------------------------------------------------
-      # STEP 5 - Installazione e Configurazione Ngrok
-      # ---------------------------------------------------------------
-      - name: Install and configure Ngrok
-        env:
-          NGROK_AUTHTOKEN: ${{ secrets.NGROK_AUTHTOKEN }}
-        run: |
-          echo "[+] Installazione Ngrok via Homebrew..."
-          brew install ngrok/ngrok/ngrok
+          echo "[+] Recupero del tuo AnyDesk ID..."
+          ANYDESK_ID=""
+          for i in {1..15}; do
+            ANYDESK_ID=$(/Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id 2>/dev/null | tr -d '[:space:]')
+            if [ -n "$ANYDESK_ID" ] && [ "$ANYDESK_ID" != "0" ]; then
+              break
+            fi
+            sleep 1
+          done
           
-          echo "[+] Autenticazione Ngrok..."
-          ngrok config add-authtoken "${NGROK_AUTHTOKEN}"
-
-      # ---------------------------------------------------------------
-      # STEP 6 - Avvio del Tunnel VNC
-      # ---------------------------------------------------------------
-      - name: Start Ngrok Tunnel
-        run: |
-          echo "[+] Avvio del tunnel sulla porta VNC (5900)..."
-          # Avvia ngrok in background esponendo la porta TCP 5900
-          nohup ngrok tcp 5900 --log=stdout > /tmp/ngrok.log 2>&1 &
-          
-          echo "[+] Attesa generazione URL pubblico (max 15s)..."
-          sleep 5
-          
-          # Estrae l'indirizzo pubblico generato da Ngrok dai log locali o dall'API locale
-          NGROK_URL=$(curl -s http://localhost:4040/api/tunnels | grep -o 'tcp://[^"]*')
-          
-          if [ -z "$NGROK_URL" ]; then
-            echo "[!] Impossibile recuperare l'URL dall'API, controllo i log..."
-            NGROK_URL=$(grep -o 'tcp://[^ ]*' /tmp/ngrok.log | head -n1)
+          if [ -z "$ANYDESK_ID" ] || [ "$ANYDESK_ID" = "0" ]; then
+            ANYDESK_ID=$(sudo grep -h "ad.anynet.id" /Users/runner/.anydesk/service.conf /var/root/.anydesk/service.conf 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '[:space:]' || echo "")
           fi
           
-          # Pulisce l'URL rimuovendo il prefisso 'tcp://' per facilitare il copia-incolla
-          CLEAN_URL=$(echo "$NGROK_URL" | sed 's/tcp:\/\///')
-          
           echo "================================================================"
-          echo "  macOS Sequoia VM pronta per accesso remoto!"
+          echo "  ANYDESK PRONTO PER IL COLLEGAMENTO!"
           echo "----------------------------------------------------------------"
-          echo "  Indirizzo VNC da usare : ${CLEAN_URL}"
-          echo "  Utente                 : runner"
-          echo "  Password               : ${RUNNER_PASSWORD}"
+          echo "  AnyDesk ID  : ${ANYDESK_ID}"
+          echo "  Password    : ${RUNNER_PASSWORD}"
           echo "================================================================"
-          echo "Nota: Inserisci l'indirizzo sopra direttamente nel tuo client VNC."
 
       # ---------------------------------------------------------------
-      # STEP 7 - KEEP-ALIVE
+      # STEP 6 - KEEP-ALIVE
       # ---------------------------------------------------------------
       - name: Keep VM alive (max 6h)
         run: |
-          echo "[+] Inizio keep-alive: 21600s (6h)."
+          echo "[+] Inizio sessione: la macchina rimarrà attiva per 6 ore."
           END=$((SECONDS+21600))
           while [ $SECONDS -lt $END ]; do
             REMAINING=$((END-SECONDS))
-            echo "[heartbeat] $(date -u +%FT%TZ) - tempo rimanente: ${REMAINING}s"
+            echo "[heartbeat] Macchina online - tempo rimanente: ${REMAINING}s"
             sleep 600
           done
-          echo "[+] Keep-alive terminato."
+          echo "[+] Fine del tempo massimo consentito."
