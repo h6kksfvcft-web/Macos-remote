@@ -1,4 +1,4 @@
-name: PearOS VM - 6 Hours
+name: Ubuntu Desktop VM - 6 Hours
 
 on:
   workflow_dispatch:
@@ -9,30 +9,25 @@ jobs:
     timeout-minutes: 360
     
     steps:
-      - uses: actions/checkout@v4
-      
-      - name: Install QEMU and dependencies
+      - name: Install QEMU & Tools
         run: |
           sudo apt update
           sudo apt install -y qemu-system-x86 qemu-utils \
-            xvfb x11vnc fluxbox \
-            tigervnc-standalone-server tigervnc-common \
-            wget curl git novnc websockify
-          
-          qemu-system-x86_64 --version
+            xvfb x11vnc tigervnc-standalone-server \
+            wget curl git novnc websockify fluxbox
 
-      - name: Download PearOS ISO
+      - name: Download Ubuntu 24.04
         run: |
-          echo "⬇️ Scaricando PearOS..."
+          # URL CORRETTI per Ubuntu 24.04
+          wget -O ubuntu.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso"
           
-          # NOTA: PearOS non ha un URL diretto stabile
-          # Usa Ubuntu come alternativa funzionante
-          wget -O ubuntu.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso"
+          # Se fallisce, prova con 22.04
+          if [ ! -f ubuntu.iso ] || [ $(stat -c%s ubuntu.iso) -lt 1000000000 ]; then
+            echo "⬇️ Scaricando Ubuntu 22.04..."
+            wget -O ubuntu.iso "https://releases.ubuntu.com/22.04/ubuntu-22.04.5-desktop-amd64.iso"
+          fi
           
-          # Se vuoi veramente PearOS, cerca l'URL corretto dal sito ufficiale
-          # wget -O pearos.iso "URL_REALE_DEL_FILE_ISO"
-          
-          ls -lh *.iso
+          ls -lh ubuntu.iso
 
       - name: Create virtual disk
         run: |
@@ -40,24 +35,23 @@ jobs:
 
       - name: Setup VNC
         run: |
-          # Uccidi eventuali processi X11 esistenti
+          # Cleanup
           pkill Xvfb || true
           pkill vncserver || true
-          pkill Xtigervnc || true
           
-          # Setup VNC password
+          # Setup VNC
           mkdir -p ~/.vnc
-          echo "pearos123" | vncpasswd -f > ~/.vnc/passwd
+          echo "ubuntu123" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
-          # Avvia Xvfb su display :99 (evita conflitti)
+          # Avvia Xvfb
           Xvfb :99 -screen 0 1280x720x24 -ac &
           sleep 3
           
           export DISPLAY=:99
           
-          # Avvia VNC server
-          vncserver :99 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd -localhost no
+          # Avvia VNC
+          vncserver :99 -geometry 1280x720 -depth 24 -localhost no
           sleep 3
           
           # Avvia noVNC
@@ -66,20 +60,19 @@ jobs:
           nohup ./utils/launch.sh --vnc localhost:5999 --listen 8080 &
           cd -
           
-          echo "✅ VNC configurato su display :99"
-          echo "🔗 VNC: localhost:5999"
+          echo "✅ VNC: localhost:5999"
           echo "🌐 Web: http://localhost:8080/vnc.html"
 
-      - name: Boot VM
+      - name: Start VM
         run: |
           export DISPLAY=:99
           
-          # Avvia la VM
+          # Avvia QEMU
           sudo qemu-system-x86_64 \
             -m 4096 \
             -cpu host \
             -enable-kvm \
-            -smp cores=2,threads=1,sockets=1 \
+            -smp cores=2 \
             -drive file=disk.qcow2,format=qcow2 \
             -cdrom ubuntu.iso \
             -boot order=d \
@@ -87,25 +80,21 @@ jobs:
             -usb -device usb-tablet \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device e1000,netdev=net0 \
-            -machine type=pc,accel=kvm \
-            -display vnc=:99 &
+            -machine type=pc,accel=kvm &
           
           echo "========================================="
           echo "✅ VM AVVIATA!"
           echo "========================================="
           echo "🔗 VNC: localhost:5999"
           echo "🌐 Web VNC: http://localhost:8080/vnc.html"
-          echo "⏱️  Durata: 6 ore (360 minuti)"
+          echo "⏱️  Durata: 6 ore"
           echo "========================================="
           
-          # Tieni attivo per 6 ore
           sleep 21600
 
       - name: Keep alive
         run: |
           while true; do
             echo "🔄 VM attiva - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Processi in esecuzione:"
-            ps aux | grep -E "qemu|vnc|Xvfb" | grep -v grep | wc -l
             sleep 300
           done
