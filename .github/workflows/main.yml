@@ -1,27 +1,25 @@
-name: Windows Server Info
+name: Windows VM
 
 on:
   workflow_dispatch:
   push:
+    branches: [ main ]
 
 jobs:
-  system-info:
-    runs-on: windows-2022
+  build:
+    runs-on: windows-latest   # oppure windows-2022 / windows-2019 per versioni specifiche
 
     steps:
-      - name: Clona il repository
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Mostra informazioni di sistema
-        shell: pwsh
+      - name: Mostra info sistema
+        shell: powershell
         run: |
-          systeminfo
-          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumber
+          Get-ComputerInfo | Select-Object WindowsProductName, OsVersion
+          $env:PATH
 
-      - name: Mostra la versione di Windows
-        shell: cmd
+      - name: Esempio comando PowerShell
+        shell: powershell
         run: |
-          ver
-
-      - name: Fine
-        run: echo Workflow completato con successo!
+          Write-Host "Ciao dalla VM Windows!"
