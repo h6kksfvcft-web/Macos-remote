@@ -1,24 +1,9 @@
-name: PearOS Desktop - 6 Hours
+name: PearOS VM - 6 Hours
 
-on: 
+on:
   workflow_dispatch:
-    inputs:
-      ram:
-        description: 'RAM (GB)'
-        default: '7'
-        type: choice
-        options:
-          - '2'
-          - '4'
-          - '8'
-      cpu_cores:
-        description: 'CPU Cores'
-        default: '2'
-        type: choice
-        options:
-          - '1'
-          - '2'
-          - '4'
+  schedule:
+    - cron: '0 0 * * *'
 
 jobs:
   vm:
@@ -28,67 +13,97 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Setup VM environment
+      - name: Install QEMU and dependencies
         run: |
           sudo apt update
-          sudo apt install -y qemu-kvm qemu-system-x86_64 qemu-utils \
-            xvfb x11vnc fluxbox novnc websockify tigervnc-standalone-server \
-            wget unzip curl
-      
-      - name: Download PearOS
-        run: |
-          # Prova diversi mirror
-          wget --tries=3 --timeout=30 \
-            -O pearos.iso \
-            "https://sourceforge.net/projects/pearos/files/pearos.iso/download" \
-            || wget -O pearos.iso "https://github.com/pearos/pearos/releases/download/latest/pearos.iso" \
-            || echo "⚠️ Impossibile scaricare PearOS, usa un URL valido"
-      
-      - name: Start X11 and VNC
-        run: |
-          # Configura display virtuale
-          Xvfb :99 -screen 0 1280x800x24 &
-          export DISPLAY=:99
+          # Il pacchetto corretto per Ubuntu 24.04 è qemu-system-x86
+          sudo apt install -y qemu-system-x86 qemu-utils \
+            xvfb x11vnc fluxbox xterm \
+            tigervnc-standalone-server tigervnc-common \
+            wget unzip curl git
           
-          # Avvia VNC
+          # Verifica installazione
+          qemu-system-x86_64 --version
+
+      - name: Download PearOS ISO
+        run: |
+          # Cerca di scaricare PearOS
+          echo "⬇️ Scaricando PearOS..."
+          
+          # Prova diversi URL (modifica con URL valido)
+          wget --tries=3 --timeout=60 \
+            -O pearos.iso \
+            "https://sourceforge.net/projects/pearos/files/latest/download" \
+            || wget -O pearos.iso "https://github.com/pearos/pearos/releases/download/v2024/pearos.iso" \
+            || echo "⚠️ Usa un URL valido per PearOS"
+          
+          ls -lh pearos.iso || echo "⚠️ File ISO non trovato"
+
+      - name: Create virtual disk
+        run: |
+          qemu-img create -f qcow2 disk.qcow2 20G
+
+      - name: Setup VNC and Web interface
+        run: |
+          # Setup VNC
           mkdir -p ~/.vnc
           echo "pearos123" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
-          vncserver :99 -geometry 1280x800 -depth 24
           
-          # Avvia noVNC
+          # Avvia Xvfb
+          Xvfb :1 -screen 0 1280x720x24 &
+          sleep 2
+          export DISPLAY=:1
+          
+          # Avvia VNC server
+          vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
+          sleep 2
+          
+          # Installa e avvia noVNC
           git clone https://github.com/novnc/noVNC.git /tmp/novnc
-          /tmp/novnc/utils/novnc_proxy --vnc localhost:5999 --listen 8080 &
-      
+          cd /tmp/novnc
+          ./utils/launch.sh --vnc localhost:5901 --listen 8080 &
+          cd -
+
       - name: Boot PearOS VM
         run: |
-          export DISPLAY=:99
+          export DISPLAY=:1
           
-          # Crea disco virtuale
-          qemu-img create -f qcow2 disk.qcow2 20G
-          
-          # Avvia QEMU con KVM
+          # Avvia la VM
           sudo qemu-system-x86_64 \
-            -m ${{ github.event.inputs.ram || 4 }}G \
+            -m 4096 \
             -cpu host \
             -enable-kvm \
-            -smp cores=${{ github.event.inputs.cpu_cores || 2 }} \
+            -smp cores=2,threads=1,sockets=1 \
             -drive file=disk.qcow2,format=qcow2 \
             -cdrom pearos.iso \
             -boot order=d \
-            -vnc :99 \
+            -vnc :1 \
             -usb -device usb-tablet \
-            -netdev user,id=net0,hostfwd=tcp::3389-:3389 \
+            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device e1000,netdev=net0 \
             -machine type=pc,accel=kvm \
-            -soundhw hda \
-            -device virtio-vga \
-            -display vnc=:99 &
+            -display vnc=:1 &
           
-          echo "✅ PearOS VM in esecuzione!"
-          echo "🔗 VNC: localhost:5999"
-          echo "🌐 Web: http://localhost:8080/vnc.html"
-          echo "⏱️  Scadenza: 6 ore"
+          echo "========================================="
+          echo "✅ PearOS VM AVVIATA!"
+          echo "========================================="
+          echo "🔗 VNC: localhost:5901"
+          echo "🌐 Web VNC: http://localhost:8080/vnc.html"
+          echo "⏱️  Durata: 6 ore (360 minuti)"
+          echo "========================================="
           
-          # Mantieni attivo
-          sleep 21600  # 6 ore
+          # Aspetta 6 ore
+          sleep 21600
+
+      - name: Keep alive (prevent timeout)
+        run: |
+          # Mantiene il workflow attivo mostrando log
+          while true; do
+            echo "🔄 VM attiva - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "📊 Uso memoria:"
+            free -h
+            echo "📊 CPU:"
+            top -bn1 | head -20
+            sleep 300
+          done
