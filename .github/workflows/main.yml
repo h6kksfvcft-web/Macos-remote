@@ -25,31 +25,35 @@ jobs:
         shell: powershell
         run: |
           $exe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
-          if (-not (Test-Path $exe)) {
-            Write-Host "ERROR: AnyDesk.exe not found at $exe"
-            Get-ChildItem "C:\Program Files (x86)\AnyDesk" -ErrorAction SilentlyContinue
-            exit 1
-          }
+          Start-Sleep -Seconds 10
 
           $pw = "${{ secrets.ANYDESK_PASSWORD }}"
-          $output = $pw | & $exe --set-password 2>&1
-          Write-Host "set-password output: $output"
+          & $exe --set-password=$pw
+          Write-Host "Password set command executed"
 
       - name: Show ID
         shell: powershell
         run: |
-          $exe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
-          for ($i = 0; $i -lt 6; $i++) {
-            $id = & $exe --get-id 2>&1
-            Write-Host "Attempt $i - ID: '$id'"
-            if ($id -match '\d{3}\s?\d{3}\s?\d{3}') {
-              Write-Host "===================================="
-              Write-Host "AnyDesk ID: $id"
-              Write-Host "===================================="
-              break
+          $confPath = "C:\ProgramData\AnyDesk\system.conf"
+
+          for ($i = 0; $i -lt 12; $i++) {
+            if (Test-Path $confPath) {
+              $line = Select-String -Path $confPath -Pattern "ad.anynet.id"
+              if ($line) {
+                Write-Host "===================================="
+                Write-Host "Config line found: $line"
+                Write-Host "===================================="
+                break
+              }
             }
+            Write-Host "Attempt $i - conf file not ready yet"
             Start-Sleep -Seconds 10
           }
+
+          # Fallback: try the CLI too, just in case
+          $exe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          $id = & $exe --get-id
+          Write-Host "CLI get-id output: '$id'"
 
       - name: Keep VM alive
         shell: powershell
