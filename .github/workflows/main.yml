@@ -1,4 +1,4 @@
-name: Windows VM con AnyDesk
+name: Windows VM with AnyDesk
 
 on:
   workflow_dispatch:
@@ -10,29 +10,47 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Installa AnyDesk
+      - name: Install AnyDesk
         shell: powershell
         run: |
           Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "$env:TEMP\AnyDesk.exe"
           Start-Process -FilePath "$env:TEMP\AnyDesk.exe" -ArgumentList "--install `"C:\Program Files (x86)\AnyDesk`" --start-with-win --silent" -Wait
-          Start-Sleep -Seconds 5
 
-      - name: Imposta password di accesso non presidiato
+          # Check that the service actually started
+          Start-Sleep -Seconds 10
+          Get-Service | Where-Object { $_.Name -like "*anydesk*" } | Format-List
+          Get-Process | Where-Object { $_.Name -like "*anydesk*" }
+
+      - name: Set password
         shell: powershell
         run: |
-          Set-Content -Path "$env:TEMP\pw.txt" -Value "${{ secrets.ANYDESK_PASSWORD }}"
-          Get-Content "$env:TEMP\pw.txt" | & "C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --set-password
-          Remove-Item "$env:TEMP\pw.txt"
+          $exe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          if (-not (Test-Path $exe)) {
+            Write-Host "ERROR: AnyDesk.exe not found at $exe"
+            Get-ChildItem "C:\Program Files (x86)\AnyDesk" -ErrorAction SilentlyContinue
+            exit 1
+          }
 
-      - name: Mostra l'ID AnyDesk
+          $pw = "${{ secrets.ANYDESK_PASSWORD }}"
+          $output = $pw | & $exe --set-password 2>&1
+          Write-Host "set-password output: $output"
+
+      - name: Show ID
         shell: powershell
         run: |
-          Start-Sleep -Seconds 5
-          $id = & "C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --get-id
-          Write-Host "===================================="
-          Write-Host "AnyDesk ID: $id"
-          Write-Host "===================================="
+          $exe = "C:\Program Files (x86)\AnyDesk\AnyDesk.exe"
+          for ($i = 0; $i -lt 6; $i++) {
+            $id = & $exe --get-id 2>&1
+            Write-Host "Attempt $i - ID: '$id'"
+            if ($id -match '\d{3}\s?\d{3}\s?\d{3}') {
+              Write-Host "===================================="
+              Write-Host "AnyDesk ID: $id"
+              Write-Host "===================================="
+              break
+            }
+            Start-Sleep -Seconds 10
+          }
 
-      - name: Mantieni la VM attiva
+      - name: Keep VM alive
         shell: powershell
-        run: Start-Sleep -Seconds 3600   # 1 ora, adatta a piacere
+        run: Start-Sleep -Seconds 3600   # 1 hour, adjust as needed
