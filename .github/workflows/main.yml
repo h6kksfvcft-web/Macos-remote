@@ -1,144 +1,21 @@
-# =====================================================================
-#  Workflow: macOS Sequoia Remote Access (Solo AnyDesk)
-# ---------------------------------------------------------------------
-#  Scopo:
-#    Avvia un runner GitHub-hosted macOS Sequoia (macos-15), imposta
-#    la password dell'utente 'runner', scarica e configura AnyDesk
-#    in modalità headless per l'accesso immediato senza interruzioni.
-# =====================================================================
-
-name: macOS Sequoia Remote Access
+name: Windows Build
 
 on:
-  workflow_dispatch:
-    inputs:
-      vnc_password:
-        description: "Password per l'accesso AnyDesk e utente 'runner'."
-        required: false
-        default: "P@ssw0rd!Remote2026"
-        type: string
+  push:
+    branches:
+      - main
 
 jobs:
-  macos-remote:
-    name: Bootstrap macOS Sequoia VM
-    runs-on: macos-15
-    timeout-minutes: 360
-
-    env:
-      RUNNER_PASSWORD: ${{ github.event.inputs.vnc_password }}
+  build:
+    runs-on: windows-2022
 
     steps:
-      # ---------------------------------------------------------------
-      # STEP 1 - Checkout
-      # ---------------------------------------------------------------
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      # ---------------------------------------------------------------
-      # STEP 2 - Informazioni di sistema
-      # ---------------------------------------------------------------
-      - name: System information
+      - name: Mostra informazioni di sistema
         run: |
-          echo "===== Host info ====="
-          sw_vers
-          uname -a
-          echo "Current user: $(whoami)"
+          systeminfo
+          ver
 
-      # ---------------------------------------------------------------
-      # STEP 3 - Configurazione password per l'utente 'runner'
-      # ---------------------------------------------------------------
-      - name: Configure password for 'runner' user
-        continue-on-error: true
-        run: |
-          set +x
-          echo "[+] Impostazione password utente..."
-          if sudo sysadminctl -resetPasswordFor runner \
-                -newPassword "${RUNNER_PASSWORD}" \
-                -adminUser runner \
-                -adminPassword "" 2>/dev/null; then
-            echo "[+] Password aggiornata con sysadminctl."
-            exit 0
-          fi
-          
-          sudo dscl . -delete /Users/runner AuthenticationAuthority 2>/dev/null || true
-          sudo dscl . -delete /Users/runner Password 2>/dev/null || true
-          sudo dscl . -passwd /Users/runner "${RUNNER_PASSWORD}" 2>/dev/null || true
-
-      # ---------------------------------------------------------------
-      # STEP 4 - Download e Installazione Rapida / Silenziosa di AnyDesk
-      # ---------------------------------------------------------------
-      - name: Install AnyDesk Fast & Headless
-        run: |
-          echo "[+] Scaricamento diretto del file DMG di AnyDesk..."
-          curl -L -o /tmp/anydesk.dmg https://download.anydesk.com/macos/anydesk.dmg
-          
-          echo "[+] Montaggio del DMG..."
-          sudo hdiutil attach /tmp/anydesk.dmg -nobrowse -quiet
-          
-          echo "[+] Copia dell'applicazione in /Applications..."
-          sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
-          
-          echo "[+] Smontaggio del DMG..."
-          sudo hdiutil detach /Volumes/AnyDesk -quiet
-          
-          echo "[+] Registrazione con i Launch Services..."
-          /System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister \
-            -f /Applications/AnyDesk.app
-
-      # ---------------------------------------------------------------
-      # STEP 5 - Configurazione Password e Avvio Servizio AnyDesk
-      # ---------------------------------------------------------------
-      - name: Configure and Start AnyDesk
-        run: |
-          set +x
-          echo "[+] Configurazione permessi bypass TCC database..."
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceScreenCapture','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
-          sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-            "INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, indirect_object_identifier_type, indirect_object_identifier, flags, last_modified) VALUES ('kTCCServiceAccessibility','com.philandro.anydesk',0,2,4,1,0,'UNUSED',0,strftime('%s','now'));" 2>/dev/null || true
-          
-          echo "[+] Avvio forzato del servizio AnyDesk in background..."
-          sudo nohup /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --service > /tmp/anydesk-service.log 2>&1 &
-          sleep 4
-          
-          echo "[+] Apertura dell'interfaccia dell'applicazione..."
-          open -a /Applications/AnyDesk.app || true
-          sleep 3
-          
-          echo "[+] Impostazione password per accesso non presidiato..."
-          echo "${RUNNER_PASSWORD}" | sudo /Applications/AnyDesk.app/Contents/MacOS/AnyDesk --set-password
-          
-          echo "[+] Recupero del tuo AnyDesk ID..."
-          ANYDESK_ID=""
-          for i in {1..15}; do
-            ANYDESK_ID=$(/Applications/AnyDesk.app/Contents/MacOS/AnyDesk --get-id 2>/dev/null | tr -d '[:space:]')
-            if [ -n "$ANYDESK_ID" ] && [ "$ANYDESK_ID" != "0" ]; then
-              break
-            fi
-            sleep 1
-          done
-          
-          if [ -z "$ANYDESK_ID" ] || [ "$ANYDESK_ID" = "0" ]; then
-            ANYDESK_ID=$(sudo grep -h "ad.anynet.id" /Users/runner/.anydesk/service.conf /var/root/.anydesk/service.conf 2>/dev/null | head -n1 | cut -d= -f2 | tr -d '[:space:]' || echo "")
-          fi
-          
-          echo "================================================================"
-          echo "  ANYDESK PRONTO PER IL COLLEGAMENTO!"
-          echo "----------------------------------------------------------------"
-          echo "  AnyDesk ID  : ${ANYDESK_ID}"
-          echo "  Password    : ${RUNNER_PASSWORD}"
-          echo "================================================================"
-
-      # ---------------------------------------------------------------
-      # STEP 6 - KEEP-ALIVE
-      # ---------------------------------------------------------------
-      - name: Keep VM alive (max 6h)
-        run: |
-          echo "[+] Inizio sessione: la macchina rimarrà attiva per 6 ore."
-          END=$((SECONDS+21600))
-          while [ $SECONDS -lt $END ]; do
-            REMAINING=$((END-SECONDS))
-            echo "[heartbeat] Macchina online - tempo rimanente: ${REMAINING}s"
-            sleep 600
-          done
-          echo "[+] Fine del tempo massimo consentito."
+      - name: Esegui un comando
+        run: echo Ciao da GitHub Actions!
