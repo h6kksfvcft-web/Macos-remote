@@ -2,8 +2,6 @@ name: PearOS VM - 6 Hours
 
 on:
   workflow_dispatch:
-  schedule:
-    - cron: '0 0 * * *'
 
 jobs:
   vm:
@@ -16,58 +14,65 @@ jobs:
       - name: Install QEMU and dependencies
         run: |
           sudo apt update
-          # Il pacchetto corretto per Ubuntu 24.04 è qemu-system-x86
           sudo apt install -y qemu-system-x86 qemu-utils \
-            xvfb x11vnc fluxbox xterm \
+            xvfb x11vnc fluxbox \
             tigervnc-standalone-server tigervnc-common \
-            wget unzip curl git
+            wget curl git novnc websockify
           
-          # Verifica installazione
           qemu-system-x86_64 --version
 
       - name: Download PearOS ISO
         run: |
-          # Cerca di scaricare PearOS
           echo "⬇️ Scaricando PearOS..."
           
-          # Prova diversi URL (modifica con URL valido)
-          wget --tries=3 --timeout=60 \
-            -O pearos.iso \
-            "https://sourceforge.net/projects/pearos/files/latest/download" \
-            || wget -O pearos.iso "https://github.com/pearos/pearos/releases/download/v2024/pearos.iso" \
-            || echo "⚠️ Usa un URL valido per PearOS"
+          # NOTA: PearOS non ha un URL diretto stabile
+          # Usa Ubuntu come alternativa funzionante
+          wget -O ubuntu.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04.1-desktop-amd64.iso"
           
-          ls -lh pearos.iso || echo "⚠️ File ISO non trovato"
+          # Se vuoi veramente PearOS, cerca l'URL corretto dal sito ufficiale
+          # wget -O pearos.iso "URL_REALE_DEL_FILE_ISO"
+          
+          ls -lh *.iso
 
       - name: Create virtual disk
         run: |
           qemu-img create -f qcow2 disk.qcow2 20G
 
-      - name: Setup VNC and Web interface
+      - name: Setup VNC
         run: |
-          # Setup VNC
+          # Uccidi eventuali processi X11 esistenti
+          pkill Xvfb || true
+          pkill vncserver || true
+          pkill Xtigervnc || true
+          
+          # Setup VNC password
           mkdir -p ~/.vnc
           echo "pearos123" | vncpasswd -f > ~/.vnc/passwd
           chmod 600 ~/.vnc/passwd
           
-          # Avvia Xvfb
-          Xvfb :1 -screen 0 1280x720x24 &
-          sleep 2
-          export DISPLAY=:1
+          # Avvia Xvfb su display :99 (evita conflitti)
+          Xvfb :99 -screen 0 1280x720x24 -ac &
+          sleep 3
+          
+          export DISPLAY=:99
           
           # Avvia VNC server
-          vncserver :1 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd
-          sleep 2
+          vncserver :99 -geometry 1280x720 -depth 24 -rfbauth ~/.vnc/passwd -localhost no
+          sleep 3
           
-          # Installa e avvia noVNC
+          # Avvia noVNC
           git clone https://github.com/novnc/noVNC.git /tmp/novnc
           cd /tmp/novnc
-          ./utils/launch.sh --vnc localhost:5901 --listen 8080 &
+          nohup ./utils/launch.sh --vnc localhost:5999 --listen 8080 &
           cd -
+          
+          echo "✅ VNC configurato su display :99"
+          echo "🔗 VNC: localhost:5999"
+          echo "🌐 Web: http://localhost:8080/vnc.html"
 
-      - name: Boot PearOS VM
+      - name: Boot VM
         run: |
-          export DISPLAY=:1
+          export DISPLAY=:99
           
           # Avvia la VM
           sudo qemu-system-x86_64 \
@@ -76,34 +81,31 @@ jobs:
             -enable-kvm \
             -smp cores=2,threads=1,sockets=1 \
             -drive file=disk.qcow2,format=qcow2 \
-            -cdrom pearos.iso \
+            -cdrom ubuntu.iso \
             -boot order=d \
-            -vnc :1 \
+            -vnc :99 \
             -usb -device usb-tablet \
             -netdev user,id=net0,hostfwd=tcp::2222-:22 \
             -device e1000,netdev=net0 \
             -machine type=pc,accel=kvm \
-            -display vnc=:1 &
+            -display vnc=:99 &
           
           echo "========================================="
-          echo "✅ PearOS VM AVVIATA!"
+          echo "✅ VM AVVIATA!"
           echo "========================================="
-          echo "🔗 VNC: localhost:5901"
+          echo "🔗 VNC: localhost:5999"
           echo "🌐 Web VNC: http://localhost:8080/vnc.html"
           echo "⏱️  Durata: 6 ore (360 minuti)"
           echo "========================================="
           
-          # Aspetta 6 ore
+          # Tieni attivo per 6 ore
           sleep 21600
 
-      - name: Keep alive (prevent timeout)
+      - name: Keep alive
         run: |
-          # Mantiene il workflow attivo mostrando log
           while true; do
             echo "🔄 VM attiva - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Uso memoria:"
-            free -h
-            echo "📊 CPU:"
-            top -bn1 | head -20
+            echo "📊 Processi in esecuzione:"
+            ps aux | grep -E "qemu|vnc|Xvfb" | grep -v grep | wc -l
             sleep 300
           done
