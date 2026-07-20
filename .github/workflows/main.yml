@@ -1,21 +1,27 @@
-name: Windows Build
+name: Windows Server Info
 
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - main
 
 jobs:
-  build:
+  system-info:
     runs-on: windows-2022
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Clona il repository
+        uses: actions/checkout@v4
 
       - name: Mostra informazioni di sistema
+        shell: pwsh
         run: |
           systeminfo
+          Get-ComputerInfo | Select-Object WindowsProductName, WindowsVersion, OsBuildNumber
+
+      - name: Mostra la versione di Windows
+        shell: cmd
+        run: |
           ver
 
-      - name: Esegui un comando
-        run: echo Ciao da GitHub Actions!
+      - name: Fine
+        run: echo Workflow completato con successo!
