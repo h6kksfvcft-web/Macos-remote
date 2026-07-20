@@ -1,25 +1,38 @@
-name: Windows VM
+name: Windows VM con AnyDesk
 
 on:
   workflow_dispatch:
-  push:
-    branches: [ main ]
 
 jobs:
   build:
-    runs-on: windows-latest   # oppure windows-2022 / windows-2019 per versioni specifiche
-
+    runs-on: windows-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Mostra info sistema
+      - name: Installa AnyDesk
         shell: powershell
         run: |
-          Get-ComputerInfo | Select-Object WindowsProductName, OsVersion
-          $env:PATH
+          Invoke-WebRequest -Uri "https://download.anydesk.com/AnyDesk.exe" -OutFile "$env:TEMP\AnyDesk.exe"
+          Start-Process -FilePath "$env:TEMP\AnyDesk.exe" -ArgumentList "--install `"C:\Program Files (x86)\AnyDesk`" --start-with-win --silent" -Wait
+          Start-Sleep -Seconds 5
 
-      - name: Esempio comando PowerShell
+      - name: Imposta password di accesso non presidiato
         shell: powershell
         run: |
-          Write-Host "Ciao dalla VM Windows!"
+          Set-Content -Path "$env:TEMP\pw.txt" -Value "${{ secrets.ANYDESK_PASSWORD }}"
+          Get-Content "$env:TEMP\pw.txt" | & "C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --set-password
+          Remove-Item "$env:TEMP\pw.txt"
+
+      - name: Mostra l'ID AnyDesk
+        shell: powershell
+        run: |
+          Start-Sleep -Seconds 5
+          $id = & "C:\Program Files (x86)\AnyDesk\AnyDesk.exe" --get-id
+          Write-Host "===================================="
+          Write-Host "AnyDesk ID: $id"
+          Write-Host "===================================="
+
+      - name: Mantieni la VM attiva
+        shell: powershell
+        run: Start-Sleep -Seconds 3600   # 1 ora, adatta a piacere
