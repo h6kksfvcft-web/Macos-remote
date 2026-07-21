@@ -12,37 +12,75 @@ jobs:
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
+          
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
+          
+          echo "✅ Remote Management attivato"
 
       - name: Configura VNC
         run: |
           PASSWORD="password123"
+          
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCEnabled -bool TRUE
           sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ScreenSharingRequiresPassword -bool TRUE
+          
           echo "$PASSWORD" > /tmp/vncpass
           sudo mv /tmp/vncpass /Library/Preferences/com.apple.RemoteManagement.password
           sudo chmod 600 /Library/Preferences/com.apple.RemoteManagement.password
+          
+          echo "✅ Password VNC impostata: $PASSWORD"
 
-      - name: Installa LocalXpose
+      - name: Scarica LocalXpose
         run: |
-          curl -L -o localxpose "https://github.com/localxpose/loclx/releases/latest/download/loclx-darwin-arm64"
-          chmod +x localxpose
+          # Scarica la versione corretta per macOS ARM64
+          curl -L -o loclx.zip "https://github.com/localxpose/loclx/releases/latest/download/loclx-darwin-arm64.zip"
+          
+          # Decomprimi
+          unzip -o loclx.zip
+          
+          # Rendi eseguibile
+          chmod +x loclx
+          
+          # Verifica
+          ./loclx --version || echo "⚠️ Verifica fallita"
           
           echo "✅ LocalXpose installato"
 
-      - name: Avvia tunnel
+      - name: Avvia tunnel LocalXpose
         run: |
-          ./localxpose tunnel tcp --port 5900 &
+          # Avvia il tunnel in background
+          ./loclx tunnel tcp --port 5900 &
           
-          sleep 5
+          # Aspetta che il tunnel si avvii
+          sleep 10
           
           echo "========================================="
           echo "✅ macOS VNC Desktop pronto!"
           echo "========================================="
-          echo "🔗 Tunnel attivo su localxpose.io"
           echo "🔐 Password: password123"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
+          echo ""
+          echo "📌 Il tunnel TCP è attivo su localxpose.io"
+          echo "   L'URL verrà mostrato nei log sopra"
+          echo ""
+          echo "📌 Per connetterti:"
+          echo "   1. Cerca nei log l'URL del tunnel"
+          echo "   2. Apri un client VNC (TigerVNC, RealVNC)"
+          echo "   3. Inserisci l'URL del tunnel"
+          echo "   4. Password: password123"
           
           sleep 21600
+
+      - name: Keep alive
+        run: |
+          while true; do
+            echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "📊 Processi:"
+            ps aux | grep loclx | grep -v grep | wc -l
+            echo "📊 Connessioni VNC:"
+            lsof -i :5900 2>/dev/null | wc -l
+            echo "---"
+            sleep 300
+          done
