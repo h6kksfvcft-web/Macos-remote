@@ -1,100 +1,68 @@
-name: Ubuntu Desktop VM - 6 Hours
+name: macOS Sequoia Desktop con AnyDesk
 
 on:
   workflow_dispatch:
 
 jobs:
-  vm:
-    runs-on: ubuntu-latest
-    timeout-minutes: 360
-    
+  macos-anydesk:
+    runs-on: macos-15  # macOS Sequoia (Apple Silicon) [citation:3][citation:9]
+    timeout-minutes: 360  # 6 ore massimo
+
     steps:
-      - name: Install QEMU & Tools
-        run: |
-          sudo apt update
-          sudo apt install -y qemu-system-x86 qemu-utils \
-            xvfb x11vnc tigervnc-standalone-server \
-            wget curl git novnc websockify fluxbox
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-      - name: Download Ubuntu 24.04
+      - name: Imposta password VNC
         run: |
-          # URL CORRETTI per Ubuntu 24.04
-          wget -O ubuntu.iso "https://releases.ubuntu.com/24.04/ubuntu-24.04-desktop-amd64.iso"
+          # Abilita VNC nativo macOS con password
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -activate -configure -access -on \
+            -users admin -privs -all \
+            -restart -agent -menu
           
-          # Se fallisce, prova con 22.04
-          if [ ! -f ubuntu.iso ] || [ $(stat -c%s ubuntu.iso) -lt 1000000000 ]; then
-            echo "⬇️ Scaricando Ubuntu 22.04..."
-            wget -O ubuntu.iso "https://releases.ubuntu.com/22.04/ubuntu-22.04.5-desktop-amd64.iso"
-          fi
-          
-          ls -lh ubuntu.iso
+          # Imposta password VNC
+          sudo dscl . -passwd /Users/admin "${{ secrets.VNC_PASSWORD }}"
 
-      - name: Create virtual disk
+      - name: Scarica e installa AnyDesk
         run: |
-          qemu-img create -f qcow2 disk.qcow2 20G
+          # Scarica AnyDesk per macOS
+          curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg"
+          
+          # Monta il DMG e installa
+          sudo hdiutil attach AnyDesk.dmg
+          sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
+          sudo hdiutil detach /Volumes/AnyDesk
+          
+          # Imposta permessi
+          sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app
 
-      - name: Setup VNC
+      - name: Avvia AnyDesk
         run: |
-          # Cleanup
-          pkill Xvfb || true
-          pkill vncserver || true
+          # Avvia AnyDesk in background
+          open /Applications/AnyDesk.app &
           
-          # Setup VNC
-          mkdir -p ~/.vnc
-          echo "ubuntu123" | vncpasswd -f > ~/.vnc/passwd
-          chmod 600 ~/.vnc/passwd
+          # Aspetta l'avvio
+          sleep 10
           
-          # Avvia Xvfb
-          Xvfb :99 -screen 0 1280x720x24 -ac &
-          sleep 3
-          
-          export DISPLAY=:99
-          
-          # Avvia VNC
-          vncserver :99 -geometry 1280x720 -depth 24 -localhost no
-          sleep 3
-          
-          # Avvia noVNC
-          git clone https://github.com/novnc/noVNC.git /tmp/novnc
-          cd /tmp/novnc
-          nohup ./utils/launch.sh --vnc localhost:5999 --listen 8080 &
-          cd -
-          
-          echo "✅ VNC: localhost:5999"
-          echo "🌐 Web: http://localhost:8080/vnc.html"
-
-      - name: Start VM
-        run: |
-          export DISPLAY=:99
-          
-          # Avvia QEMU
-          sudo qemu-system-x86_64 \
-            -m 4096 \
-            -cpu host \
-            -enable-kvm \
-            -smp cores=2 \
-            -drive file=disk.qcow2,format=qcow2 \
-            -cdrom ubuntu.iso \
-            -boot order=d \
-            -vnc :99 \
-            -usb -device usb-tablet \
-            -netdev user,id=net0,hostfwd=tcp::2222-:22 \
-            -device e1000,netdev=net0 \
-            -machine type=pc,accel=kvm &
+          # Ottieni l'ID AnyDesk
+          ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "N/A")
           
           echo "========================================="
-          echo "✅ VM AVVIATA!"
+          echo "✅ macOS Sequoia pronto!"
           echo "========================================="
-          echo "🔗 VNC: localhost:5999"
-          echo "🌐 Web VNC: http://localhost:8080/vnc.html"
+          echo "🔑 AnyDesk ID: $ANYDESK_ID"
+          echo "🔐 Password VNC: ${{ secrets.VNC_PASSWORD }}"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
           
+          # Mantieni attivo il workflow
           sleep 21600
 
       - name: Keep alive
         run: |
           while true; do
-            echo "🔄 VM attiva - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "📊 Processi:"
+            ps aux | grep -E "AnyDesk|ARDAgent" | grep -v grep
             sleep 300
           done
