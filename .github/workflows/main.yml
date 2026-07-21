@@ -1,9 +1,9 @@
-name: macOS Sequoia - AnyDesk
+name: macOS VNC via LocalXpose
 
 on: workflow_dispatch
 
 jobs:
-  anydesk:
+  vnc:
     runs-on: macos-15
     timeout-minutes: 360
 
@@ -15,45 +15,34 @@ jobs:
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
 
-      - name: Installa AnyDesk
+      - name: Configura VNC
         run: |
-          curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg"
-          sudo hdiutil attach AnyDesk.dmg -nobrowse
-          sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
-          sudo hdiutil detach /Volumes/AnyDesk
-          sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app 2>/dev/null || true
+          PASSWORD="password123"
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCEnabled -bool TRUE
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ScreenSharingRequiresPassword -bool TRUE
+          echo "$PASSWORD" > /tmp/vncpass
+          sudo mv /tmp/vncpass /Library/Preferences/com.apple.RemoteManagement.password
+          sudo chmod 600 /Library/Preferences/com.apple.RemoteManagement.password
 
-      - name: Configura e avvia AnyDesk
+      - name: Installa LocalXpose
         run: |
-          # Imposta password per AnyDesk
-          PASSWORD="${{ secrets.ANYDESK_PASSWORD || 'password123' }}"
+          curl -L -o localxpose "https://github.com/localxpose/loclx/releases/latest/download/loclx-darwin-arm64"
+          chmod +x localxpose
           
-          # Crea il file di configurazione
-          mkdir -p ~/Library/Application\ Support/AnyDesk
+          echo "✅ LocalXpose installato"
+
+      - name: Avvia tunnel
+        run: |
+          ./localxpose tunnel tcp --port 5900 &
           
-          cat > ~/Library/Application\ Support/AnyDesk/user.conf << EOF
-          [settings]
-          password=$PASSWORD
-          EOF
-          
-          # Avvia AnyDesk
-          open /Applications/AnyDesk.app &
-          sleep 15
-          
-          # Leggi ID AnyDesk
-          ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "CONTROLLA L'APP")
+          sleep 5
           
           echo "========================================="
-          echo "✅ macOS Sequoia pronto!"
+          echo "✅ macOS VNC Desktop pronto!"
           echo "========================================="
-          echo "🔑 AnyDesk ID: $ANYDESK_ID"
-          echo "🔐 Password: $PASSWORD"
+          echo "🔗 Tunnel attivo su localxpose.io"
+          echo "🔐 Password: password123"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
-          echo ""
-          echo "📌 Per connetterti:"
-          echo "   1. Apri AnyDesk sul tuo computer"
-          echo "   2. Inserisci l'ID: $ANYDESK_ID"
-          echo "   3. Inserisci la password: $PASSWORD"
           
           sleep 21600
