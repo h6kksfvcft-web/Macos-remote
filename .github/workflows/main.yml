@@ -1,9 +1,9 @@
-name: macOS - TeamViewer
+name: macOS Desktop - Cloudflare
 
 on: workflow_dispatch
 
 jobs:
-  teamviewer:
+  desktop:
     runs-on: macos-15
     timeout-minutes: 360
 
@@ -14,42 +14,52 @@ jobs:
             -activate -configure -access -on -restart -agent -menu
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
+          echo "✅ Remote Management attivato"
 
-      - name: Installa TeamViewer
+      - name: Imposta password VNC
         run: |
-          # Scarica la versione PKG
-          curl -L -o TeamViewer.pkg "https://download.teamviewer.com/download/version_15x/TeamViewer.pkg"
-          sudo installer -pkg TeamViewer.pkg -target /
-          echo "✅ TeamViewer installato"
+          PASSWORD="password123"
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCEnabled -bool TRUE
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ScreenSharingRequiresPassword -bool TRUE
+          echo "$PASSWORD" > /tmp/vncpass
+          sudo mv /tmp/vncpass /Library/Preferences/com.apple.RemoteManagement.password
+          sudo chmod 600 /Library/Preferences/com.apple.RemoteManagement.password
+          echo "✅ Password impostata: $PASSWORD"
 
-      - name: Avvia TeamViewer
+      - name: Installa Cloudflare Tunnel
         run: |
-          # Avvia TeamViewer
-          open /Applications/TeamViewer.app &
-          sleep 30
+          curl -L -o cloudflared "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64"
+          chmod +x cloudflared
+          echo "✅ Cloudflare installato"
+
+      - name: Avvia tunnel
+        run: |
+          # Avvia il tunnel
+          ./cloudflared tunnel --url localhost:5900 &
           
-          # Leggi ID
-          TV_ID=$(defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist "ClientID" 2>/dev/null || echo "")
-          
-          if [ -z "$TV_ID" ]; then
-            TV_ID=$(grep -o 'ClientID=[0-9]*' ~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf 2>/dev/null | cut -d'=' -f2)
-          fi
-          
-          if [ -z "$TV_ID" ]; then
-            TV_ID="⚠️ CONTROLLA L'APP TEAMVIEWER"
-          fi
+          sleep 10
           
           echo "========================================="
           echo "✅ MACOS PRONTO!"
           echo "========================================="
-          echo "🔑 TEAMVIEWER ID: $TV_ID"
-          echo "🔐 PASSWORD: password123"
-          echo "⏱️  6 ORE"
+          echo "🌐 TUNNEL ATTIVO"
+          echo "🔐 Password: password123"
+          echo "⏱️  6 ore"
           echo "========================================="
           echo ""
-          echo "📌 COME CONNETTERSI:"
-          echo "   1. Apri TeamViewer sul tuo computer"
-          echo "   2. Inserisci ID: $TV_ID"
-          echo "   3. Password: password123"
+          echo "📌 PER TROVARE L'URL:"
+          echo "   Cerca nei log sopra 'https://'"
+          echo "   o 'trycloudflare.com'"
+          echo ""
+          echo "📌 PER CONNETTERSI:"
+          echo "   1. Vai all'URL trovato nei log"
+          echo "   2. Usa password: password123"
           
           sleep 21600
+
+      - name: Keep alive
+        run: |
+          while true; do
+            echo "🔄 Attivo - $(date '+%Y-%m-%d %H:%M:%S')"
+            sleep 300
+          done
