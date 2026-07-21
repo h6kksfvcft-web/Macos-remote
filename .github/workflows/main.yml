@@ -1,9 +1,9 @@
-name: macOS VNC via LocalXpose
+name: macOS Sequoia - TeamViewer
 
 on: workflow_dispatch
 
 jobs:
-  vnc:
+  teamviewer:
     runs-on: macos-15
     timeout-minutes: 360
 
@@ -12,75 +12,49 @@ jobs:
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
-          
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
-          
           echo "✅ Remote Management attivato"
 
-      - name: Configura VNC
+      - name: Installa TeamViewer
         run: |
-          PASSWORD="password123"
-          
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCEnabled -bool TRUE
-          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist ScreenSharingRequiresPassword -bool TRUE
-          
-          echo "$PASSWORD" > /tmp/vncpass
-          sudo mv /tmp/vncpass /Library/Preferences/com.apple.RemoteManagement.password
-          sudo chmod 600 /Library/Preferences/com.apple.RemoteManagement.password
-          
-          echo "✅ Password VNC impostata: $PASSWORD"
+          curl -L -o TeamViewer.dmg "https://download.teamviewer.com/download/TeamViewer.dmg"
+          sudo hdiutil attach TeamViewer.dmg -nobrowse
+          sudo cp -R /Volumes/TeamViewer/TeamViewer.app /Applications/
+          sudo hdiutil detach /Volumes/TeamViewer
+          sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
+          echo "✅ TeamViewer installato"
 
-      - name: Scarica LocalXpose
+      - name: Avvia TeamViewer
         run: |
-          # Scarica la versione corretta per macOS ARM64
-          curl -L -o loclx.zip "https://github.com/localxpose/loclx/releases/latest/download/loclx-darwin-arm64.zip"
+          # Avvia TeamViewer
+          open /Applications/TeamViewer.app &
           
-          # Decomprimi
-          unzip -o loclx.zip
+          # Aspetta l'avvio
+          sleep 30
           
-          # Rendi eseguibile
-          chmod +x loclx
+          # Leggi ID
+          TV_ID=$(defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist "ClientID" 2>/dev/null || echo "")
           
-          # Verifica
-          ./loclx --version || echo "⚠️ Verifica fallita"
+          if [ -z "$TV_ID" ]; then
+            TV_ID=$(grep -o 'ClientID=[0-9]*' ~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf 2>/dev/null | cut -d'=' -f2)
+          fi
           
-          echo "✅ LocalXpose installato"
-
-      - name: Avvia tunnel LocalXpose
-        run: |
-          # Avvia il tunnel in background
-          ./loclx tunnel tcp --port 5900 &
-          
-          # Aspetta che il tunnel si avvii
-          sleep 10
+          if [ -z "$TV_ID" ]; then
+            TV_ID="CONTROLLA L'APP"
+          fi
           
           echo "========================================="
-          echo "✅ macOS VNC Desktop pronto!"
+          echo "✅ MACOS PRONTO!"
           echo "========================================="
-          echo "🔐 Password: password123"
-          echo "⏱️  Durata: 6 ore"
+          echo "🔑 TEAMVIEWER ID: $TV_ID"
+          echo "🔐 PASSWORD: password123"
+          echo "⏱️  6 ORE"
           echo "========================================="
           echo ""
-          echo "📌 Il tunnel TCP è attivo su localxpose.io"
-          echo "   L'URL verrà mostrato nei log sopra"
-          echo ""
-          echo "📌 Per connetterti:"
-          echo "   1. Cerca nei log l'URL del tunnel"
-          echo "   2. Apri un client VNC (TigerVNC, RealVNC)"
-          echo "   3. Inserisci l'URL del tunnel"
-          echo "   4. Password: password123"
+          echo "📌 CONNETTITI:"
+          echo "   1. Apri TeamViewer sul tuo PC"
+          echo "   2. Inserisci ID: $TV_ID"
+          echo "   3. Password: password123"
           
           sleep 21600
-
-      - name: Keep alive
-        run: |
-          while true; do
-            echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Processi:"
-            ps aux | grep loclx | grep -v grep | wc -l
-            echo "📊 Connessioni VNC:"
-            lsof -i :5900 2>/dev/null | wc -l
-            echo "---"
-            sleep 300
-          done
