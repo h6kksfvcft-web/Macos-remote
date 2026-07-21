@@ -5,44 +5,45 @@ on:
 
 jobs:
   macos-anydesk:
-    runs-on: macos-15  # macOS Sequoia (Apple Silicon) [citation:3][citation:9]
-    timeout-minutes: 360  # 6 ore massimo
+    runs-on: macos-15
+    timeout-minutes: 360
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Imposta password VNC
+      - name: Imposta VNC e abilita accesso remoto
         run: |
-          # Abilita VNC nativo macOS con password
+          # Abilita Remote Management
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -activate -configure -access -on \
-            -users admin -privs -all \
-            -restart -agent -menu
+            -activate -configure -access -on -restart -agent -menu
           
-          # Imposta password VNC
-          sudo dscl . -passwd /Users/admin "${{ secrets.VNC_PASSWORD }}"
+          # Abilita accesso per tutti gli utenti
+          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+            -configure -allowAccessFor -allUsers -privs -all
+          
+          echo "✅ Remote Management attivato"
 
       - name: Scarica e installa AnyDesk
         run: |
-          # Scarica AnyDesk per macOS
+          # Scarica AnyDesk
           curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg"
           
-          # Monta il DMG e installa
-          sudo hdiutil attach AnyDesk.dmg
+          # Monta e installa
+          sudo hdiutil attach AnyDesk.dmg -nobrowse
           sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
           sudo hdiutil detach /Volumes/AnyDesk
           
-          # Imposta permessi
-          sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app
+          # Rimuovi quarantine
+          sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app 2>/dev/null || true
 
       - name: Avvia AnyDesk
         run: |
-          # Avvia AnyDesk in background
+          # Avvia AnyDesk
           open /Applications/AnyDesk.app &
           
           # Aspetta l'avvio
-          sleep 10
+          sleep 15
           
           # Ottieni l'ID AnyDesk
           ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "N/A")
@@ -51,11 +52,14 @@ jobs:
           echo "✅ macOS Sequoia pronto!"
           echo "========================================="
           echo "🔑 AnyDesk ID: $ANYDESK_ID"
-          echo "🔐 Password VNC: ${{ secrets.VNC_PASSWORD }}"
+          echo "🔐 Password: usa il link di AnyDesk"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
+          echo ""
+          echo "📌 Se l'ID non appare, controlla i log di AnyDesk:"
+          echo "   log stream --process AnyDesk"
           
-          # Mantieni attivo il workflow
+          # Mantieni attivo
           sleep 21600
 
       - name: Keep alive
@@ -63,6 +67,8 @@ jobs:
           while true; do
             echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
             echo "📊 Processi:"
-            ps aux | grep -E "AnyDesk|ARDAgent" | grep -v grep
+            ps aux | grep -E "AnyDesk|ARDAgent" | grep -v grep | wc -l
+            echo "📊 Connessioni:"
+            netstat -an | grep 5900 | wc -l
             sleep 300
           done
