@@ -1,9 +1,9 @@
-name: macOS Sequoia con TeamViewer
+name: macOS Sequoia Desktop
 
 on: workflow_dispatch
 
 jobs:
-  teamviewer:
+  macos-desktop:
     runs-on: macos-15
     timeout-minutes: 360
 
@@ -12,27 +12,72 @@ jobs:
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
+          
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
+          
+          echo "✅ Remote Management attivato"
 
-      - name: Installa TeamViewer
+      - name: Scarica e installa TeamViewer
         run: |
+          # Scarica TeamViewer
           curl -L -o TeamViewer.dmg "https://download.teamviewer.com/download/TeamViewer.dmg"
+          
+          # Monta il DMG
           sudo hdiutil attach TeamViewer.dmg -nobrowse
-          sudo cp -R /Volumes/TeamViewer/TeamViewer.app /Applications/
-          sudo hdiutil detach /Volumes/TeamViewer
+          
+          # Trova il percorso corretto dell'app
+          VOLUME_PATH=$(ls -d /Volumes/TeamViewer* 2>/dev/null | head -1)
+          echo "Volume montato: $VOLUME_PATH"
+          ls -la "$VOLUME_PATH"
+          
+          # Copia l'app - potrebbe essere in una cartella diversa
+          if [ -d "$VOLUME_PATH/TeamViewer.app" ]; then
+            sudo cp -R "$VOLUME_PATH/TeamViewer.app" /Applications/
+          elif [ -d "$VOLUME_PATH/TeamViewer/TeamViewer.app" ]; then
+            sudo cp -R "$VOLUME_PATH/TeamViewer/TeamViewer.app" /Applications/
+          else
+            # Cerca l'app ovunque nel volume
+            APP_PATH=$(find "$VOLUME_PATH" -name "*.app" -type d | head -1)
+            if [ -n "$APP_PATH" ]; then
+              sudo cp -R "$APP_PATH" /Applications/
+            else
+              echo "❌ TeamViewer.app non trovato"
+              ls -laR "$VOLUME_PATH"
+              exit 1
+            fi
+          fi
+          
+          # Smonta il DMG
+          sudo hdiutil detach "$VOLUME_PATH"
+          
+          # Rimuovi quarantine
           sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
+          
+          echo "✅ TeamViewer installato"
 
       - name: Avvia TeamViewer
         run: |
+          # Avvia TeamViewer
           open /Applications/TeamViewer.app &
-          sleep 15
+          
+          sleep 20
           
           echo "========================================="
-          echo "✅ TeamViewer avviato!"
+          echo "✅ macOS Sequoia pronto!"
           echo "========================================="
-          echo "📌 Controlla l'ID nell'app TeamViewer"
+          echo "📌 TeamViewer è in esecuzione"
+          echo "   Controlla l'ID nell'applicazione"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
           
           sleep 21600
+
+      - name: Keep alive
+        run: |
+          while true; do
+            echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
+            echo "📊 Processi:"
+            ps aux | grep -E "TeamViewer|ARDAgent" | grep -v grep | wc -l
+            sleep 300
+          done
