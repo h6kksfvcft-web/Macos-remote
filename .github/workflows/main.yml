@@ -26,48 +26,71 @@ jobs:
           # Monta il DMG
           sudo hdiutil attach TeamViewer.dmg -nobrowse
           
-          # Trova il percorso corretto dell'app
+          # Trova il volume
           VOLUME_PATH=$(ls -d /Volumes/TeamViewer* 2>/dev/null | head -1)
           echo "Volume montato: $VOLUME_PATH"
+          
+          # Mostra il contenuto del volume
           ls -la "$VOLUME_PATH"
           
-          # Copia l'app - potrebbe essere in una cartella diversa
-          if [ -d "$VOLUME_PATH/TeamViewer.app" ]; then
-            sudo cp -R "$VOLUME_PATH/TeamViewer.app" /Applications/
-          elif [ -d "$VOLUME_PATH/TeamViewer/TeamViewer.app" ]; then
-            sudo cp -R "$VOLUME_PATH/TeamViewer/TeamViewer.app" /Applications/
+          # TeamViewer usa un installer, non l'app direttamente
+          # Dobbiamo eseguire l'installer
+          INSTALLER_PATH="$VOLUME_PATH/Install TeamViewer.app"
+          
+          if [ -d "$INSTALLER_PATH" ]; then
+            echo "✅ Trovato installer, eseguo..."
+            
+            # Esegui l'installer
+            open "$INSTALLER_PATH" &
+            
+            # Aspetta che l'installer finisca
+            sleep 30
+            
+            # TeamViewer si installa in ~/Applications o /Applications
+            # Cerchiamo l'app
+            find /Applications -name "TeamViewer.app" -type d 2>/dev/null
+            find ~/Applications -name "TeamViewer.app" -type d 2>/dev/null
           else
-            # Cerca l'app ovunque nel volume
-            APP_PATH=$(find "$VOLUME_PATH" -name "*.app" -type d | head -1)
-            if [ -n "$APP_PATH" ]; then
-              sudo cp -R "$APP_PATH" /Applications/
-            else
-              echo "❌ TeamViewer.app non trovato"
-              ls -laR "$VOLUME_PATH"
-              exit 1
-            fi
+            echo "❌ Installer non trovato"
+            exit 1
           fi
           
           # Smonta il DMG
           sudo hdiutil detach "$VOLUME_PATH"
           
-          # Rimuovi quarantine
-          sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
-          
           echo "✅ TeamViewer installato"
 
-      - name: Avvia TeamViewer
+      - name: Trova e avvia TeamViewer
         run: |
-          # Avvia TeamViewer
-          open /Applications/TeamViewer.app &
+          # Cerca TeamViewer in tutte le posizioni possibili
+          TV_PATH=$(find /Applications -name "TeamViewer.app" -type d 2>/dev/null | head -1)
           
-          sleep 20
+          if [ -z "$TV_PATH" ]; then
+            TV_PATH=$(find ~/Applications -name "TeamViewer.app" -type d 2>/dev/null | head -1)
+          fi
+          
+          if [ -z "$TV_PATH" ]; then
+            # Cerca ovunque
+            TV_PATH=$(find / -name "TeamViewer.app" -type d 2>/dev/null | grep -v "Trash" | head -1)
+          fi
+          
+          if [ -n "$TV_PATH" ]; then
+            echo "✅ Trovato TeamViewer: $TV_PATH"
+            open "$TV_PATH" &
+            echo "✅ TeamViewer avviato"
+          else
+            echo "❌ TeamViewer non trovato"
+            echo "📌 Contenuto di /Applications:"
+            ls -la /Applications
+          fi
+          
+          sleep 15
           
           echo "========================================="
           echo "✅ macOS Sequoia pronto!"
           echo "========================================="
           echo "📌 TeamViewer è in esecuzione"
-          echo "   Controlla l'ID nell'applicazione"
+          echo "   ID: controlla nell'app"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
           
@@ -79,5 +102,7 @@ jobs:
             echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
             echo "📊 Processi:"
             ps aux | grep -E "TeamViewer|ARDAgent" | grep -v grep | wc -l
+            echo "📊 App in /Applications:"
+            ls /Applications | grep -i teamviewer || echo "TeamViewer non trovato"
             sleep 300
           done
