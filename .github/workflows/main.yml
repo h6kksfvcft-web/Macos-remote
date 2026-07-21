@@ -1,89 +1,38 @@
-name: macOS Sequoia Desktop con AnyDesk
+name: macOS Sequoia con TeamViewer
 
 on: workflow_dispatch
 
 jobs:
-  macos-anydesk:
+  teamviewer:
     runs-on: macos-15
     timeout-minutes: 360
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
       - name: Abilita Remote Management
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
-          
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
-          
-          echo "✅ Remote Management attivato"
 
-      - name: Scarica e installa AnyDesk
+      - name: Installa TeamViewer
         run: |
-          # Scarica AnyDesk - URL aggiornato
-          curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg?x64"
-          
-          # Verifica che il file sia un DMG valido
-          file AnyDesk.dmg
-          
-          # Monta e installa
-          sudo hdiutil attach AnyDesk.dmg -nobrowse || \
-          sudo hdiutil attach AnyDesk.dmg -nobrowse -ignorebadchecksums
-          
-          sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
-          sudo hdiutil detach /Volumes/AnyDesk
-          
-          # Rimuovi quarantine
-          sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app 2>/dev/null || true
-          
-          echo "✅ AnyDesk installato"
+          curl -L -o TeamViewer.dmg "https://download.teamviewer.com/download/TeamViewer.dmg"
+          sudo hdiutil attach TeamViewer.dmg -nobrowse
+          sudo cp -R /Volumes/TeamViewer/TeamViewer.app /Applications/
+          sudo hdiutil detach /Volumes/TeamViewer
+          sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
 
-      - name: Avvia AnyDesk e ottieni ID
+      - name: Avvia TeamViewer
         run: |
-          # Avvia AnyDesk
-          open /Applications/AnyDesk.app &
-          
-          # Aspetta l'avvio completo
-          sleep 20
-          
-          # Ottieni l'ID AnyDesk da diversi file di configurazione
-          ANYDESK_ID=""
-          
-          # Prova a leggere da vari file plist
-          if [ -f ~/Library/Preferences/com.philandro.anydesk.plist ]; then
-            ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "")
-          fi
-          
-          if [ -z "$ANYDESK_ID" ] && [ -f ~/Library/Application\ Support/AnyDesk/user.conf ]; then
-            ANYDESK_ID=$(grep -o 'ad.display.id=[0-9]*' ~/Library/Application\ Support/AnyDesk/user.conf | cut -d'=' -f2)
-          fi
-          
-          if [ -z "$ANYDESK_ID" ]; then
-            ANYDESK_ID="CONTROLLA I LOG MANUALMENTE"
-          fi
+          open /Applications/TeamViewer.app &
+          sleep 15
           
           echo "========================================="
-          echo "✅ macOS Sequoia pronto!"
+          echo "✅ TeamViewer avviato!"
           echo "========================================="
-          echo "🔑 AnyDesk ID: $ANYDESK_ID"
+          echo "📌 Controlla l'ID nell'app TeamViewer"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
-          echo ""
-          echo "📌 Per trovare l'ID manualmente:"
-          echo "   defaults read ~/Library/Preferences/com.philandro.anydesk.plist"
-          echo "   cat ~/Library/Application\ Support/AnyDesk/user.conf"
           
           sleep 21600
-
-      - name: Keep alive
-        run: |
-          while true; do
-            echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Processi AnyDesk:"
-            ps aux | grep -E "AnyDesk" | grep -v grep | wc -l
-            echo "---"
-            sleep 300
-          done
