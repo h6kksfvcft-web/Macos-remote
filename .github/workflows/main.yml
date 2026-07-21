@@ -1,60 +1,36 @@
-name: macOS Sequoia - TeamViewer
+name: macOS VNC Desktop
 
 on: workflow_dispatch
 
 jobs:
-  teamviewer:
+  vnc:
     runs-on: macos-15
     timeout-minutes: 360
 
     steps:
-      - name: Abilita Remote Management
+      - name: Setup VNC
         run: |
+          # Abilita Remote Management
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
-          sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-            -configure -allowAccessFor -allUsers -privs -all
-          echo "✅ Remote Management attivato"
-
-      - name: Installa TeamViewer
-        run: |
-          curl -L -o TeamViewer.dmg "https://download.teamviewer.com/download/TeamViewer.dmg"
-          sudo hdiutil attach TeamViewer.dmg -nobrowse
-          sudo cp -R /Volumes/TeamViewer/TeamViewer.app /Applications/
-          sudo hdiutil detach /Volumes/TeamViewer
-          sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
-          echo "✅ TeamViewer installato"
-
-      - name: Avvia TeamViewer
-        run: |
-          # Avvia TeamViewer
-          open /Applications/TeamViewer.app &
           
-          # Aspetta l'avvio
-          sleep 30
+          # Imposta password
+          sudo defaults write /Library/Preferences/com.apple.RemoteManagement.plist VNCEnabled -bool TRUE
+          echo "password123" > /tmp/vncpass
+          sudo mv /tmp/vncpass /Library/Preferences/com.apple.RemoteManagement.password
+          sudo chmod 600 /Library/Preferences/com.apple.RemoteManagement.password
           
-          # Leggi ID
-          TV_ID=$(defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist "ClientID" 2>/dev/null || echo "")
-          
-          if [ -z "$TV_ID" ]; then
-            TV_ID=$(grep -o 'ClientID=[0-9]*' ~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf 2>/dev/null | cut -d'=' -f2)
-          fi
-          
-          if [ -z "$TV_ID" ]; then
-            TV_ID="CONTROLLA L'APP"
-          fi
+          # Mostra IP
+          IP=$(ifconfig | grep "inet " | grep -v 127.0.0.1 | awk '{print $2}' | head -1)
           
           echo "========================================="
-          echo "✅ MACOS PRONTO!"
+          echo "✅ MACOS VNC PRONTO!"
           echo "========================================="
-          echo "🔑 TEAMVIEWER ID: $TV_ID"
+          echo "🔗 VNC: $IP:5900"
           echo "🔐 PASSWORD: password123"
           echo "⏱️  6 ORE"
           echo "========================================="
           echo ""
-          echo "📌 CONNETTITI:"
-          echo "   1. Apri TeamViewer sul tuo PC"
-          echo "   2. Inserisci ID: $TV_ID"
-          echo "   3. Password: password123"
+          echo "📌 USA CLIENT VNC (TigerVNC, RealVNC)"
           
           sleep 21600
