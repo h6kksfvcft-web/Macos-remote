@@ -1,9 +1,9 @@
-name: macOS Sequoia Desktop
+name: macOS Sequoia - AnyDesk
 
 on: workflow_dispatch
 
 jobs:
-  macos-desktop:
+  anydesk:
     runs-on: macos-15
     timeout-minutes: 360
 
@@ -12,98 +12,48 @@ jobs:
         run: |
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
-          
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
-          
-          echo "✅ Remote Management attivato"
 
-      - name: Scarica e installa TeamViewer
+      - name: Installa AnyDesk
         run: |
-          curl -L -o TeamViewer.dmg "https://download.teamviewer.com/download/TeamViewer.dmg"
-          sudo hdiutil attach TeamViewer.dmg -nobrowse
-          
-          VOLUME_PATH=$(ls -d /Volumes/TeamViewer* 2>/dev/null | head -1)
-          echo "Volume montato: $VOLUME_PATH"
-          
-          PKG_PATH="$VOLUME_PATH/Install TeamViewer.app/Contents/Resources/Install TeamViewer.pkg"
-          
-          if [ -f "$PKG_PATH" ]; then
-            echo "✅ Trovato pacchetto, installo..."
-            sudo installer -pkg "$PKG_PATH" -target /
-          else
-            echo "❌ Pacchetto non trovato"
-            exit 1
-          fi
-          
-          sudo hdiutil detach "$VOLUME_PATH" 2>/dev/null || true
-          sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
-          
-          echo "✅ TeamViewer installato"
+          curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg"
+          sudo hdiutil attach AnyDesk.dmg -nobrowse
+          sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
+          sudo hdiutil detach /Volumes/AnyDesk
+          sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app 2>/dev/null || true
 
-      - name: Avvia TeamViewer e ottieni ID
+      - name: Configura e avvia AnyDesk
         run: |
-          # Avvia TeamViewer
-          open /Applications/TeamViewer.app &
+          # Imposta password per AnyDesk
+          PASSWORD="${{ secrets.ANYDESK_PASSWORD || 'password123' }}"
           
-          # Aspetta l'avvio completo
-          sleep 20
+          # Crea il file di configurazione
+          mkdir -p ~/Library/Application\ Support/AnyDesk
           
-          # Leggi l'ID da diversi file di configurazione
-          TV_ID=""
+          cat > ~/Library/Application\ Support/AnyDesk/user.conf << EOF
+          [settings]
+          password=$PASSWORD
+          EOF
           
-          # Prova a leggere dal plist
-          if [ -f ~/Library/Preferences/com.teamviewer.teamviewer.plist ]; then
-            TV_ID=$(defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist "ClientID" 2>/dev/null || echo "")
-          fi
+          # Avvia AnyDesk
+          open /Applications/AnyDesk.app &
+          sleep 15
           
-          # Se non funziona, prova dal file di configurazione
-          if [ -z "$TV_ID" ]; then
-            CONFIG_FILE=~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf
-            if [ -f "$CONFIG_FILE" ]; then
-              TV_ID=$(grep -o 'ClientID=[0-9]*' "$CONFIG_FILE" | cut -d'=' -f2)
-            fi
-          fi
-          
-          # Se ancora non funziona, prova con sqlite
-          if [ -z "$TV_ID" ]; then
-            DB_FILE=~/Library/Application\ Support/TeamViewer/TeamViewer.sqlite
-            if [ -f "$DB_FILE" ]; then
-              TV_ID=$(sqlite3 "$DB_FILE" "SELECT value FROM Config WHERE key='ClientID'" 2>/dev/null || echo "")
-            fi
-          fi
-          
-          # Se non troviamo l'ID, mostriamo come trovarlo manualmente
-          if [ -z "$TV_ID" ]; then
-            TV_ID="NON TROVATO - Vedi istruzioni sotto"
-          fi
+          # Leggi ID AnyDesk
+          ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "CONTROLLA L'APP")
           
           echo "========================================="
           echo "✅ macOS Sequoia pronto!"
           echo "========================================="
-          echo "🔑 TeamViewer ID: $TV_ID"
+          echo "🔑 AnyDesk ID: $ANYDESK_ID"
+          echo "🔐 Password: $PASSWORD"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
           echo ""
-          echo "📌 Se l'ID non è visibile sopra:"
-          echo "   1. L'ID è mostrato nell'app TeamViewer"
-          echo "   2. Controlla i log del workflow per il dettaglio"
-          echo ""
-          echo "📌 Per vedere l'ID manualmente:"
-          echo "   defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist ClientID"
-          echo "   o"
-          echo "   cat ~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf | grep ClientID"
+          echo "📌 Per connetterti:"
+          echo "   1. Apri AnyDesk sul tuo computer"
+          echo "   2. Inserisci l'ID: $ANYDESK_ID"
+          echo "   3. Inserisci la password: $PASSWORD"
           
           sleep 21600
-
-      - name: Keep alive
-        run: |
-          while true; do
-            echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Processi TeamViewer:"
-            ps aux | grep -i teamviewer | grep -v grep | wc -l
-            echo "📊 Connessioni:"
-            lsof -i :5938 2>/dev/null | wc -l
-            echo "---"
-            sleep 300
-          done
