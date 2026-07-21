@@ -20,104 +20,79 @@ jobs:
 
       - name: Scarica e installa TeamViewer
         run: |
-          # Scarica TeamViewer
           curl -L -o TeamViewer.dmg "https://download.teamviewer.com/download/TeamViewer.dmg"
-          
-          # Monta il DMG
           sudo hdiutil attach TeamViewer.dmg -nobrowse
           
-          # Trova il volume
           VOLUME_PATH=$(ls -d /Volumes/TeamViewer* 2>/dev/null | head -1)
           echo "Volume montato: $VOLUME_PATH"
           
-          # Mostra contenuto
-          ls -la "$VOLUME_PATH"
+          PKG_PATH="$VOLUME_PATH/Install TeamViewer.app/Contents/Resources/Install TeamViewer.pkg"
           
-          # Estrai il contenuto dell'installer
-          INSTALLER_PATH="$VOLUME_PATH/Install TeamViewer.app"
-          
-          if [ -d "$INSTALLER_PATH" ]; then
-            echo "✅ Trovato installer, estraggo i file..."
-            
-            # Crea una directory temporanea per estrarre
-            mkdir -p /tmp/teamviewer_extract
-            
-            # Usa pkgutil per estrarre il contenuto se è un pacchetto
-            # Oppure copia manualmente l'app
-            
-            # Cerca l'app all'interno dell'installer
-            APP_PATH=$(find "$INSTALLER_PATH" -name "TeamViewer.app" -type d 2>/dev/null | head -1)
-            
-            if [ -n "$APP_PATH" ]; then
-              echo "✅ Trovata app in: $APP_PATH"
-              sudo cp -R "$APP_PATH" /Applications/
-            else
-              # Se non troviamo l'app, cerchiamo i file .pkg
-              PKG_PATH=$(find "$INSTALLER_PATH" -name "*.pkg" -type f 2>/dev/null | head -1)
-              
-              if [ -n "$PKG_PATH" ]; then
-                echo "✅ Trovato pacchetto: $PKG_PATH"
-                # Installa il pacchetto
-                sudo installer -pkg "$PKG_PATH" -target /
-              else
-                # Cerchiamo qualsiasi .app
-                APP_PATH=$(find "$INSTALLER_PATH" -name "*.app" -type d 2>/dev/null | head -1)
-                if [ -n "$APP_PATH" ]; then
-                  echo "✅ Trovata app: $APP_PATH"
-                  sudo cp -R "$APP_PATH" /Applications/
-                else
-                  echo "❌ Nessuna app o pkg trovato"
-                  find "$INSTALLER_PATH" -type f | head -20
-                  exit 1
-                fi
-              fi
-            fi
+          if [ -f "$PKG_PATH" ]; then
+            echo "✅ Trovato pacchetto, installo..."
+            sudo installer -pkg "$PKG_PATH" -target /
           else
-            echo "❌ Installer non trovato"
+            echo "❌ Pacchetto non trovato"
             exit 1
           fi
           
-          # Smonta il DMG
           sudo hdiutil detach "$VOLUME_PATH" 2>/dev/null || true
-          
-          # Rimuovi quarantine da tutte le app TeamViewer
-          find /Applications -name "TeamViewer.app" -type d 2>/dev/null | while read app; do
-            sudo xattr -d com.apple.quarantine "$app" 2>/dev/null || true
-          done
+          sudo xattr -d com.apple.quarantine /Applications/TeamViewer.app 2>/dev/null || true
           
           echo "✅ TeamViewer installato"
 
-      - name: Trova e avvia TeamViewer
+      - name: Avvia TeamViewer e ottieni ID
         run: |
-          # Cerca TeamViewer in tutte le posizioni possibili
-          TV_PATH=$(find /Applications -name "TeamViewer.app" -type d 2>/dev/null | head -1)
+          # Avvia TeamViewer
+          open /Applications/TeamViewer.app &
           
-          if [ -z "$TV_PATH" ]; then
-            TV_PATH=$(find ~/Applications -name "TeamViewer.app" -type d 2>/dev/null | head -1)
+          # Aspetta l'avvio completo
+          sleep 20
+          
+          # Leggi l'ID da diversi file di configurazione
+          TV_ID=""
+          
+          # Prova a leggere dal plist
+          if [ -f ~/Library/Preferences/com.teamviewer.teamviewer.plist ]; then
+            TV_ID=$(defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist "ClientID" 2>/dev/null || echo "")
           fi
           
-          if [ -n "$TV_PATH" ]; then
-            echo "✅ Trovato TeamViewer: $TV_PATH"
-            # Avvia l'app
-            open "$TV_PATH" &
-            sleep 10
-            echo "✅ TeamViewer avviato"
-          else
-            echo "❌ TeamViewer non trovato"
-            echo "📌 Contenuto di /Applications:"
-            ls -la /Applications | grep -i teamviewer || echo "Nessun TeamViewer trovato"
-            echo ""
-            echo "📌 Contenuto di ~/Applications:"
-            ls -la ~/Applications 2>/dev/null | grep -i teamviewer || echo "Nessun TeamViewer trovato"
+          # Se non funziona, prova dal file di configurazione
+          if [ -z "$TV_ID" ]; then
+            CONFIG_FILE=~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf
+            if [ -f "$CONFIG_FILE" ]; then
+              TV_ID=$(grep -o 'ClientID=[0-9]*' "$CONFIG_FILE" | cut -d'=' -f2)
+            fi
+          fi
+          
+          # Se ancora non funziona, prova con sqlite
+          if [ -z "$TV_ID" ]; then
+            DB_FILE=~/Library/Application\ Support/TeamViewer/TeamViewer.sqlite
+            if [ -f "$DB_FILE" ]; then
+              TV_ID=$(sqlite3 "$DB_FILE" "SELECT value FROM Config WHERE key='ClientID'" 2>/dev/null || echo "")
+            fi
+          fi
+          
+          # Se non troviamo l'ID, mostriamo come trovarlo manualmente
+          if [ -z "$TV_ID" ]; then
+            TV_ID="NON TROVATO - Vedi istruzioni sotto"
           fi
           
           echo "========================================="
           echo "✅ macOS Sequoia pronto!"
           echo "========================================="
-          echo "📌 TeamViewer è in esecuzione"
-          echo "   ID: controlla nell'applicazione"
+          echo "🔑 TeamViewer ID: $TV_ID"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
+          echo ""
+          echo "📌 Se l'ID non è visibile sopra:"
+          echo "   1. L'ID è mostrato nell'app TeamViewer"
+          echo "   2. Controlla i log del workflow per il dettaglio"
+          echo ""
+          echo "📌 Per vedere l'ID manualmente:"
+          echo "   defaults read ~/Library/Preferences/com.teamviewer.teamviewer.plist ClientID"
+          echo "   o"
+          echo "   cat ~/Library/Application\ Support/TeamViewer/Config/TeamViewer.conf | grep ClientID"
           
           sleep 21600
 
@@ -127,8 +102,8 @@ jobs:
             echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
             echo "📊 Processi TeamViewer:"
             ps aux | grep -i teamviewer | grep -v grep | wc -l
-            echo "📊 App in /Applications:"
-            ls /Applications 2>/dev/null | grep -i teamviewer || echo "Nessun TeamViewer trovato"
+            echo "📊 Connessioni:"
+            lsof -i :5938 2>/dev/null | wc -l
             echo "---"
             sleep 300
           done
