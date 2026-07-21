@@ -1,7 +1,6 @@
 name: macOS Sequoia Desktop con AnyDesk
 
-on:
-  workflow_dispatch:
+on: workflow_dispatch
 
 jobs:
   macos-anydesk:
@@ -12,13 +11,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Imposta VNC e abilita accesso remoto
+      - name: Abilita Remote Management
         run: |
-          # Abilita Remote Management
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -activate -configure -access -on -restart -agent -menu
           
-          # Abilita accesso per tutti gli utenti
           sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
             -configure -allowAccessFor -allUsers -privs -all
           
@@ -26,49 +23,67 @@ jobs:
 
       - name: Scarica e installa AnyDesk
         run: |
-          # Scarica AnyDesk
-          curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg"
+          # Scarica AnyDesk - URL aggiornato
+          curl -L -o AnyDesk.dmg "https://download.anydesk.com/mac/AnyDesk.dmg?x64"
+          
+          # Verifica che il file sia un DMG valido
+          file AnyDesk.dmg
           
           # Monta e installa
-          sudo hdiutil attach AnyDesk.dmg -nobrowse
+          sudo hdiutil attach AnyDesk.dmg -nobrowse || \
+          sudo hdiutil attach AnyDesk.dmg -nobrowse -ignorebadchecksums
+          
           sudo cp -R /Volumes/AnyDesk/AnyDesk.app /Applications/
           sudo hdiutil detach /Volumes/AnyDesk
           
           # Rimuovi quarantine
           sudo xattr -d com.apple.quarantine /Applications/AnyDesk.app 2>/dev/null || true
+          
+          echo "✅ AnyDesk installato"
 
-      - name: Avvia AnyDesk
+      - name: Avvia AnyDesk e ottieni ID
         run: |
           # Avvia AnyDesk
           open /Applications/AnyDesk.app &
           
-          # Aspetta l'avvio
-          sleep 15
+          # Aspetta l'avvio completo
+          sleep 20
           
-          # Ottieni l'ID AnyDesk
-          ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "N/A")
+          # Ottieni l'ID AnyDesk da diversi file di configurazione
+          ANYDESK_ID=""
+          
+          # Prova a leggere da vari file plist
+          if [ -f ~/Library/Preferences/com.philandro.anydesk.plist ]; then
+            ANYDESK_ID=$(defaults read ~/Library/Preferences/com.philandro.anydesk.plist "AdDisplayID" 2>/dev/null || echo "")
+          fi
+          
+          if [ -z "$ANYDESK_ID" ] && [ -f ~/Library/Application\ Support/AnyDesk/user.conf ]; then
+            ANYDESK_ID=$(grep -o 'ad.display.id=[0-9]*' ~/Library/Application\ Support/AnyDesk/user.conf | cut -d'=' -f2)
+          fi
+          
+          if [ -z "$ANYDESK_ID" ]; then
+            ANYDESK_ID="CONTROLLA I LOG MANUALMENTE"
+          fi
           
           echo "========================================="
           echo "✅ macOS Sequoia pronto!"
           echo "========================================="
           echo "🔑 AnyDesk ID: $ANYDESK_ID"
-          echo "🔐 Password: usa il link di AnyDesk"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
           echo ""
-          echo "📌 Se l'ID non appare, controlla i log di AnyDesk:"
-          echo "   log stream --process AnyDesk"
+          echo "📌 Per trovare l'ID manualmente:"
+          echo "   defaults read ~/Library/Preferences/com.philandro.anydesk.plist"
+          echo "   cat ~/Library/Application\ Support/AnyDesk/user.conf"
           
-          # Mantieni attivo
           sleep 21600
 
       - name: Keep alive
         run: |
           while true; do
             echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Processi:"
-            ps aux | grep -E "AnyDesk|ARDAgent" | grep -v grep | wc -l
-            echo "📊 Connessioni:"
-            netstat -an | grep 5900 | wc -l
+            echo "📊 Processi AnyDesk:"
+            ps aux | grep -E "AnyDesk" | grep -v grep | wc -l
+            echo "---"
             sleep 300
           done
