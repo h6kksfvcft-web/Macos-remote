@@ -30,33 +30,60 @@ jobs:
           VOLUME_PATH=$(ls -d /Volumes/TeamViewer* 2>/dev/null | head -1)
           echo "Volume montato: $VOLUME_PATH"
           
-          # Mostra il contenuto del volume
+          # Mostra contenuto
           ls -la "$VOLUME_PATH"
           
-          # TeamViewer usa un installer, non l'app direttamente
-          # Dobbiamo eseguire l'installer
+          # Estrai il contenuto dell'installer
           INSTALLER_PATH="$VOLUME_PATH/Install TeamViewer.app"
           
           if [ -d "$INSTALLER_PATH" ]; then
-            echo "✅ Trovato installer, eseguo..."
+            echo "✅ Trovato installer, estraggo i file..."
             
-            # Esegui l'installer
-            open "$INSTALLER_PATH" &
+            # Crea una directory temporanea per estrarre
+            mkdir -p /tmp/teamviewer_extract
             
-            # Aspetta che l'installer finisca
-            sleep 30
+            # Usa pkgutil per estrarre il contenuto se è un pacchetto
+            # Oppure copia manualmente l'app
             
-            # TeamViewer si installa in ~/Applications o /Applications
-            # Cerchiamo l'app
-            find /Applications -name "TeamViewer.app" -type d 2>/dev/null
-            find ~/Applications -name "TeamViewer.app" -type d 2>/dev/null
+            # Cerca l'app all'interno dell'installer
+            APP_PATH=$(find "$INSTALLER_PATH" -name "TeamViewer.app" -type d 2>/dev/null | head -1)
+            
+            if [ -n "$APP_PATH" ]; then
+              echo "✅ Trovata app in: $APP_PATH"
+              sudo cp -R "$APP_PATH" /Applications/
+            else
+              # Se non troviamo l'app, cerchiamo i file .pkg
+              PKG_PATH=$(find "$INSTALLER_PATH" -name "*.pkg" -type f 2>/dev/null | head -1)
+              
+              if [ -n "$PKG_PATH" ]; then
+                echo "✅ Trovato pacchetto: $PKG_PATH"
+                # Installa il pacchetto
+                sudo installer -pkg "$PKG_PATH" -target /
+              else
+                # Cerchiamo qualsiasi .app
+                APP_PATH=$(find "$INSTALLER_PATH" -name "*.app" -type d 2>/dev/null | head -1)
+                if [ -n "$APP_PATH" ]; then
+                  echo "✅ Trovata app: $APP_PATH"
+                  sudo cp -R "$APP_PATH" /Applications/
+                else
+                  echo "❌ Nessuna app o pkg trovato"
+                  find "$INSTALLER_PATH" -type f | head -20
+                  exit 1
+                fi
+              fi
+            fi
           else
             echo "❌ Installer non trovato"
             exit 1
           fi
           
           # Smonta il DMG
-          sudo hdiutil detach "$VOLUME_PATH"
+          sudo hdiutil detach "$VOLUME_PATH" 2>/dev/null || true
+          
+          # Rimuovi quarantine da tutte le app TeamViewer
+          find /Applications -name "TeamViewer.app" -type d 2>/dev/null | while read app; do
+            sudo xattr -d com.apple.quarantine "$app" 2>/dev/null || true
+          done
           
           echo "✅ TeamViewer installato"
 
@@ -69,28 +96,26 @@ jobs:
             TV_PATH=$(find ~/Applications -name "TeamViewer.app" -type d 2>/dev/null | head -1)
           fi
           
-          if [ -z "$TV_PATH" ]; then
-            # Cerca ovunque
-            TV_PATH=$(find / -name "TeamViewer.app" -type d 2>/dev/null | grep -v "Trash" | head -1)
-          fi
-          
           if [ -n "$TV_PATH" ]; then
             echo "✅ Trovato TeamViewer: $TV_PATH"
+            # Avvia l'app
             open "$TV_PATH" &
+            sleep 10
             echo "✅ TeamViewer avviato"
           else
             echo "❌ TeamViewer non trovato"
             echo "📌 Contenuto di /Applications:"
-            ls -la /Applications
+            ls -la /Applications | grep -i teamviewer || echo "Nessun TeamViewer trovato"
+            echo ""
+            echo "📌 Contenuto di ~/Applications:"
+            ls -la ~/Applications 2>/dev/null | grep -i teamviewer || echo "Nessun TeamViewer trovato"
           fi
-          
-          sleep 15
           
           echo "========================================="
           echo "✅ macOS Sequoia pronto!"
           echo "========================================="
           echo "📌 TeamViewer è in esecuzione"
-          echo "   ID: controlla nell'app"
+          echo "   ID: controlla nell'applicazione"
           echo "⏱️  Durata: 6 ore"
           echo "========================================="
           
@@ -100,9 +125,10 @@ jobs:
         run: |
           while true; do
             echo "🔄 Desktop attivo - $(date '+%Y-%m-%d %H:%M:%S')"
-            echo "📊 Processi:"
-            ps aux | grep -E "TeamViewer|ARDAgent" | grep -v grep | wc -l
+            echo "📊 Processi TeamViewer:"
+            ps aux | grep -i teamviewer | grep -v grep | wc -l
             echo "📊 App in /Applications:"
-            ls /Applications | grep -i teamviewer || echo "TeamViewer non trovato"
+            ls /Applications 2>/dev/null | grep -i teamviewer || echo "Nessun TeamViewer trovato"
+            echo "---"
             sleep 300
           done
